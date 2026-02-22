@@ -157,10 +157,13 @@ profile = m.get_profile()             # instant system prompt
         nonlocal _llm_client, _extractor
         if _llm_client is None:
             from engine.extractor.llm_client import create_llm_client
+            llm_model = os.environ.get("LLM_MODEL", "")
             llm_config = {
                 "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
-                "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY", "")},
-                "openai": {"api_key": os.environ.get("OPENAI_API_KEY", "")},
+                "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY", ""),
+                              **({"model": llm_model} if llm_model else {})},
+                "openai": {"api_key": os.environ.get("OPENAI_API_KEY", ""),
+                            **({"model": llm_model} if llm_model else {})},
             }
             _llm_client = create_llm_client(llm_config)
             from engine.extractor.conversation_extractor import ConversationExtractor
