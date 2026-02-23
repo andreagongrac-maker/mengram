@@ -122,7 +122,7 @@ def create_rest_api(brain: MengramBrain) -> "FastAPI":
     app = FastAPI(
         title="Mengram API",
         description="AI memory layer for apps",
-        version="1.0.0",
+        version="2.14.1",
     )
 
     # CORS — allow all origins for local dev
@@ -337,7 +337,7 @@ def create_rest_api(brain: MengramBrain) -> "FastAPI":
     @app.get("/api/health")
     async def health():
         """Health check."""
-        return {"status": "ok", "version": "0.6.0"}
+        return {"status": "ok", "version": "2.14.1"}
 
     # --- Static files for Web UI ---
     from fastapi.responses import FileResponse

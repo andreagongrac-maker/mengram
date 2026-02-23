@@ -253,7 +253,9 @@ class CloudMemory:
         params = {}
         if user_id and user_id != "default":
             params["sub_user_id"] = user_id
-        return self._request("POST", "/v1/merge", {"source": source, "target": target}, params=params)
+        params["source"] = source
+        params["target"] = target
+        return self._request("POST", "/v1/merge", params=params)
 
     def merge_user(self, user_id: str = "default") -> dict:
         """Merge 'User' entity into the primary person entity."""
@@ -275,8 +277,8 @@ class CloudMemory:
         params = {}
         if user_id and user_id != "default":
             params["sub_user_id"] = user_id
-        return self._request("PATCH", f"/v1/entity/{name}/type",
-                            {"type": new_type}, params=params)
+        params["new_type"] = new_type
+        return self._request("PATCH", f"/v1/entity/{name}/type", params=params)
 
     def feed(self, limit: int = 20, user_id: str = "default") -> list:
         """Get activity feed."""
@@ -654,7 +656,7 @@ class CloudMemory:
                      include_fired: bool = False, limit: int = 50,
                      user_id: str = "default") -> list:
         """Get smart triggers (reminders, contradictions, patterns)."""
-        params = {"include_fired": include_fired, "limit": limit}
+        params = {"include_fired": str(include_fired).lower(), "limit": limit}
         if user_id and user_id != "default":
             params["sub_user_id"] = user_id
         path = f"/v1/triggers/{target_user_id}" if target_user_id else "/v1/triggers"

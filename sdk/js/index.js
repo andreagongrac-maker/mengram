@@ -199,6 +199,20 @@ class MengramClient {
   }
 
   /**
+   * Fix/change the type of an entity.
+   * @param {string} name - Entity name
+   * @param {string} newType - New entity type
+   * @param {object} [options]
+   * @param {string} [options.userId] - Sub-user ID
+   * @returns {Promise<{status: string}>}
+   */
+  async fixEntityType(name, newType, options = {}) {
+    const params = { new_type: newType };
+    if (options.userId && options.userId !== 'default') params.sub_user_id = options.userId;
+    return this._request('PATCH', `/v1/entity/${encodeURIComponent(name)}/type`, null, params);
+  }
+
+  /**
    * Get usage statistics.
    * @returns {Promise<object>}
    */
@@ -619,6 +633,16 @@ class MengramClient {
     return this._request('DELETE', `/v1/keys/${keyId}`);
   }
 
+  /**
+   * Rename an API key.
+   * @param {string} keyId - Key ID
+   * @param {string} name - New key name
+   * @returns {Promise<object>}
+   */
+  async renameKey(keyId, name) {
+    return this._request('PATCH', `/v1/keys/${keyId}`, { name });
+  }
+
   // ---- Memory Management ----
 
   /**
@@ -658,6 +682,19 @@ class MengramClient {
   }
 
   /**
+   * Deduplicate memories within a specific entity.
+   * @param {string} name - Entity name
+   * @param {object} [options]
+   * @param {string} [options.userId] - Sub-user ID
+   * @returns {Promise<{status: string, entity: string, merged: number}>}
+   */
+  async dedupEntity(name, options = {}) {
+    const params = {};
+    if (options.userId && options.userId !== 'default') params.sub_user_id = options.userId;
+    return this._request('POST', `/v1/entity/${encodeURIComponent(name)}/dedup`, null, params);
+  }
+
+  /**
    * Archive a specific fact from an entity.
    * @param {string} entityName - Name of the entity
    * @param {string} factContent - The fact content to archive
@@ -668,7 +705,7 @@ class MengramClient {
   async archiveFact(entityName, factContent, options = {}) {
     const params = {};
     if (options.userId && options.userId !== 'default') params.sub_user_id = options.userId;
-    return this._request('POST', '/v1/archive_fact', { entity: entityName, fact: factContent }, params);
+    return this._request('POST', '/v1/archive_fact', { entity_name: entityName, fact_content: factContent }, params);
   }
 
   /**
@@ -682,7 +719,21 @@ class MengramClient {
   async merge(sourceName, targetName, options = {}) {
     const params = {};
     if (options.userId && options.userId !== 'default') params.sub_user_id = options.userId;
-    return this._request('POST', '/v1/merge', { source: sourceName, target: targetName }, params);
+    params.source = sourceName;
+    params.target = targetName;
+    return this._request('POST', '/v1/merge', undefined, params);
+  }
+
+  /**
+   * Merge all duplicate entities for a user.
+   * @param {object} [options]
+   * @param {string} [options.userId] - Sub-user ID
+   * @returns {Promise<{status: string}>}
+   */
+  async mergeUser(options = {}) {
+    const params = {};
+    if (options.userId && options.userId !== 'default') params.sub_user_id = options.userId;
+    return this._request('POST', '/v1/merge_user', null, params);
   }
 
   /**

@@ -1,2 +1,2 @@
-mengram-ai[crewai]>=2.7.0
+mengram-ai[crewai]>=2.14.0
 python-dotenv

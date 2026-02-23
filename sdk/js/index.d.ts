@@ -170,6 +170,7 @@ export declare class MengramClient {
   getAllFull(options?: { userId?: string }): Promise<Entity[]>;
   get(name: string, options?: { userId?: string }): Promise<Entity | null>;
   delete(name: string, options?: { userId?: string }): Promise<boolean>;
+  fixEntityType(name: string, newType: string, options?: { userId?: string }): Promise<{status: string}>;
   stats(options?: { userId?: string }): Promise<Stats>;
   graph(options?: { userId?: string }): Promise<{ nodes: any[]; edges: any[] }>;
   getProfile(userId?: string, options?: { force?: boolean }): Promise<CognitiveProfile>;
@@ -181,8 +182,8 @@ export declare class MengramClient {
   // Procedural Memory
   procedures(options?: { query?: string; limit?: number }): Promise<Procedure[]>;
   procedureFeedback(procedureId: string, options?: { success?: boolean; context?: string; failedAtStep?: number }): Promise<FeedbackResult>;
-  procedureHistory(procedureId: string): Promise<ProcedureHistoryResult>;
-  procedureEvolution(procedureId: string): Promise<{ evolution: ProcedureEvolutionEntry[] }>;
+  procedureHistory(procedureId: string, options?: { userId?: string }): Promise<ProcedureHistoryResult>;
+  procedureEvolution(procedureId: string, options?: { userId?: string }): Promise<{ evolution: ProcedureEvolutionEntry[] }>;
 
   // Unified Search
   searchAll(query: string, options?: { limit?: number }): Promise<UnifiedSearchResult>;
@@ -217,13 +218,16 @@ export declare class MengramClient {
   listKeys(): Promise<ApiKey[]>;
   createKey(name?: string): Promise<{ key: string; name: string }>;
   revokeKey(keyId: string): Promise<any>;
+  renameKey(keyId: string, name: string): Promise<ApiKey>;
 
   // Memory Management
   reindex(options?: { userId?: string }): Promise<any>;
   dedup(options?: { userId?: string }): Promise<any>;
   dedupAll(options?: { userId?: string }): Promise<any>;
+  dedupEntity(name: string, options?: { userId?: string }): Promise<{status: string, entity: string, merged: number}>;
   archiveFact(entityName: string, factContent: string, options?: { userId?: string }): Promise<any>;
   merge(sourceName: string, targetName: string, options?: { userId?: string }): Promise<any>;
+  mergeUser(options?: { userId?: string }): Promise<{status: string}>;
   feed(options?: { limit?: number; userId?: string }): Promise<any[]>;
 
   // Jobs
