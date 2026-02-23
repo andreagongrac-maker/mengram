@@ -218,7 +218,7 @@ profile = m.get_profile()             # instant system prompt
                 # Group relevant facts back by entity
                 entity_facts = {}  # entity_idx → [(fact_text, score)]
                 for item in resp.results:
-                    if item.relevance_score >= 0.05:
+                    if item.relevance_score >= 0.15:
                         eidx, fidx, _ = fact_docs[item.index]
                         fact_text = results[eidx]["facts"][fidx]
                         if eidx not in entity_facts:
