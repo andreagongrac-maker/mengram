@@ -116,8 +116,17 @@ class CloudMemory:
 
     def add_text(self, text: str, user_id: str = "default",
                  agent_id: str = None, run_id: str = None,
-                 app_id: str = None) -> dict:
-        """Add memories from plain text."""
+                 app_id: str = None, expiration_date: str = None) -> dict:
+        """Add memories from plain text.
+
+        Args:
+            text: Plain text to extract memories from
+            user_id: User identifier
+            agent_id: Filter by agent
+            run_id: Filter by run/session
+            app_id: Filter by application
+            expiration_date: ISO datetime when memories expire (e.g. "2026-12-31")
+        """
         body = {"text": text, "user_id": user_id}
         if agent_id:
             body["agent_id"] = agent_id
@@ -125,6 +134,8 @@ class CloudMemory:
             body["run_id"] = run_id
         if app_id:
             body["app_id"] = app_id
+        if expiration_date:
+            body["expiration_date"] = expiration_date
         return self._request("POST", "/v1/add_text", body)
 
     def search(self, query: str, user_id: str = "default",
@@ -283,7 +294,7 @@ class CloudMemory:
         params["new_type"] = new_type
         return self._request("PATCH", f"/v1/entity/{name}/type", params=params)
 
-    def feed(self, limit: int = 20, user_id: str = "default") -> list:
+    def feed(self, limit: int = 50, user_id: str = "default") -> list:
         """Get activity feed."""
         params = {"limit": limit}
         if user_id and user_id != "default":
@@ -317,7 +328,7 @@ class CloudMemory:
 
     # ---- Episodic Memory ----
 
-    def episodes(self, query: str = None, limit: int = 20,
+    def episodes(self, query: str = None, limit: int = None,
                  after: str = None, before: str = None,
                  user_id: str = "default") -> list[dict]:
         """
@@ -333,7 +344,7 @@ class CloudMemory:
             List of episodes with summary, context, outcome, participants
         """
         if query:
-            params = {"query": query, "limit": limit}
+            params = {"query": query, "limit": limit or 5}
             if after:
                 params["after"] = after
             if before:
@@ -343,7 +354,7 @@ class CloudMemory:
             resp = self._request("GET", "/v1/episodes/search", params=params)
             return resp.get("results", [])
         else:
-            params = {"limit": limit}
+            params = {"limit": limit or 20}
             if after:
                 params["after"] = after
             if before:
@@ -633,6 +644,10 @@ class CloudMemory:
     def revoke_key(self, key_id: str) -> dict:
         """Revoke a specific API key by ID."""
         return self._request("DELETE", f"/v1/keys/{key_id}")
+
+    def rename_key(self, key_id: str, name: str) -> dict:
+        """Rename an API key."""
+        return self._request("PATCH", f"/v1/keys/{key_id}", {"name": name})
 
     # ---- Job Tracking (Async) ----
 

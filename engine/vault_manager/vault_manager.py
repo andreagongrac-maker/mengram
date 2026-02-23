@@ -18,6 +18,7 @@ import yaml
 from engine.extractor.conversation_extractor import (
     ExtractionResult,
     ExtractedEntity,
+    ExtractedFact,
     ExtractedRelation,
     ExtractedKnowledge,
 )
@@ -107,7 +108,8 @@ class VaultManager:
         if entity.facts:
             lines.append("## Facts\n")
             for fact in entity.facts:
-                linked = self._add_wikilinks(fact, entity.name)
+                fact_text = fact.content if isinstance(fact, ExtractedFact) else str(fact)
+                linked = self._add_wikilinks(fact_text, entity.name)
                 lines.append(f"- {linked}")
             lines.append("")
 
@@ -146,8 +148,9 @@ class VaultManager:
         # New facts
         new_facts = []
         for fact in entity.facts:
-            if not self._fact_exists(fact, existing_facts):
-                new_facts.append(fact)
+            fact_text = fact.content if isinstance(fact, ExtractedFact) else str(fact)
+            if not self._fact_exists(fact_text, existing_facts):
+                new_facts.append(fact_text)
 
         if new_facts:
             if "## Facts" in body:

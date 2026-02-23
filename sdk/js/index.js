@@ -104,16 +104,19 @@ class MengramClient {
    * @param {string} [options.agentId]
    * @param {string} [options.runId]
    * @param {string} [options.appId]
+   * @param {string} [options.expirationDate] - ISO datetime when memories expire
    * @returns {Promise<{status: string}>}
    */
   async addText(text, options = {}) {
-    return this._request('POST', '/v1/add_text', {
+    const body = {
       text,
       user_id: options.userId || 'default',
       agent_id: options.agentId || null,
       run_id: options.runId || null,
       app_id: options.appId || null,
-    });
+    };
+    if (options.expirationDate) body.expiration_date = options.expirationDate;
+    return this._request('POST', '/v1/add_text', body);
   }
 
   /**
@@ -193,7 +196,7 @@ class MengramClient {
     try {
       const params = {};
       if (options.userId && options.userId !== 'default') params.sub_user_id = options.userId;
-      await this._request('DELETE', `/v1/entity/${encodeURIComponent(name)}`, null, params);
+      await this._request('DELETE', `/v1/memory/${encodeURIComponent(name)}`, null, params);
       return true;
     } catch {
       return false;
@@ -748,7 +751,7 @@ class MengramClient {
    * @returns {Promise<Array>}
    */
   async feed(options = {}) {
-    const params = { limit: options.limit || 20 };
+    const params = { limit: options.limit || 50 };
     if (options.userId && options.userId !== 'default') params.sub_user_id = options.userId;
     const data = await this._request('GET', '/v1/feed', null, params);
     return data.feed || [];
