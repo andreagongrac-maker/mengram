@@ -1135,6 +1135,18 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             "job_id": job_id,
         }
 
+    @app.post("/v1/add_text", tags=["Memory"])
+    async def add_text(req: AddTextRequest, user_id: str = Depends(auth)):
+        """Add memories from plain text (wraps into a single user message)."""
+        add_req = AddRequest(
+            messages=[Message(role="user", content=req.text)],
+            user_id=req.user_id,
+            agent_id=req.agent_id,
+            run_id=req.run_id,
+            app_id=req.app_id,
+        )
+        return await add(add_req, user_id)
+
     @app.get("/v1/jobs/{job_id}", tags=["System"])
     async def job_status(job_id: str, user_id: str = Depends(auth)):
         """Check status of a background job."""

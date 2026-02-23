@@ -523,7 +523,7 @@ class CloudMemory:
         """Create a new API key. Returns raw key (save it!)."""
         return self._request("POST", "/v1/keys", {"name": name})
 
-    def revoke_key(self, key_id: int) -> dict:
+    def revoke_key(self, key_id: str) -> dict:
         """Revoke a specific API key by ID."""
         return self._request("DELETE", f"/v1/keys/{key_id}")
 
