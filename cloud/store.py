@@ -1813,12 +1813,38 @@ class CloudStore:
                     })
                     fact_ids_accessed.append(str(row["id"]))
 
-            # Sort facts by effective importance, return as strings with dates
+            # Fact-level relevance: rank facts by embedding similarity to query
+            chunk_relevance = {}  # eid → {fact_content → relevance_score}
+            if entity_ids:
+                cur.execute(
+                    """SELECT entity_id, chunk_text,
+                              1 - (embedding <=> %s::vector) AS relevance
+                       FROM embeddings
+                       WHERE entity_id = ANY(%s::uuid[])""",
+                    (embedding_str, entity_ids)
+                )
+                for row in cur.fetchall():
+                    eid = str(row["entity_id"])
+                    text = row["chunk_text"]
+                    rel = float(row["relevance"])
+                    fact_text = text.split(": ", 1)[1] if ": " in text else text
+                    if eid not in chunk_relevance:
+                        chunk_relevance[eid] = {}
+                    chunk_relevance[eid][fact_text] = max(
+                        chunk_relevance[eid].get(fact_text, 0), rel
+                    )
+
+            # Sort facts by combined relevance + importance, keep top 7
             for eid in entity_map:
+                relevances = chunk_relevance.get(eid, {})
                 sorted_facts = sorted(
                     entity_map[eid]["facts"],
-                    key=lambda f: f["importance"], reverse=True
-                )
+                    key=lambda f: (
+                        0.7 * relevances.get(f["content"], 0) +
+                        0.3 * f["importance"]
+                    ),
+                    reverse=True
+                )[:7]
                 entity_map[eid]["facts"] = [
                     f"[{f['event_date']}] {f['content']}" if f.get("event_date")
                     else f["content"]
@@ -4236,14 +4262,47 @@ Be specific and personal, not generic. No markdown, just JSON."""
                    ORDER BY importance DESC, created_at DESC""",
                 (entity_ids,)
             )
-            facts_map = {}
-            for r in cur.fetchall():
+            facts_rows = cur.fetchall()  # Save before next query overwrites cursor
+
+            # Fact-level relevance: rank facts by embedding similarity to query
+            chunk_relevance = {}  # eid → {fact_content → relevance_score}
+            if entity_ids:
+                cur.execute(
+                    """SELECT entity_id, chunk_text,
+                              1 - (embedding <=> %s::vector) AS relevance
+                       FROM embeddings
+                       WHERE entity_id = ANY(%s::uuid[])""",
+                    (embedding_str, entity_ids)
+                )
+                for row in cur.fetchall():
+                    eid = str(row["entity_id"])
+                    text = row["chunk_text"]
+                    rel = float(row["relevance"])
+                    fact_text = text.split(": ", 1)[1] if ": " in text else text
+                    if eid not in chunk_relevance:
+                        chunk_relevance[eid] = {}
+                    chunk_relevance[eid][fact_text] = max(
+                        chunk_relevance[eid].get(fact_text, 0), rel
+                    )
+
+            # Build facts with combined relevance + importance scoring
+            facts_raw = {}  # eid → [(text, combined_score)]
+            for r in facts_rows:
                 eid = str(r["entity_id"])
-                if eid not in facts_map:
-                    facts_map[eid] = []
-                if len(facts_map[eid]) < 15:
-                    fact_str = f"[{r['event_date']}] {r['content']}" if r.get("event_date") else r["content"]
-                    facts_map[eid].append(fact_str)
+                if eid not in facts_raw:
+                    facts_raw[eid] = []
+                relevances = chunk_relevance.get(eid, {})
+                relevance = relevances.get(r["content"], 0)
+                importance = float(r["importance"] or 0.5)
+                combined = 0.7 * relevance + 0.3 * importance
+                fact_str = f"[{r['event_date']}] {r['content']}" if r.get("event_date") else r["content"]
+                facts_raw[eid].append((fact_str, combined))
+
+            # Sort by combined score, keep top 7 per entity
+            facts_map = {}
+            for eid, facts_list in facts_raw.items():
+                facts_list.sort(key=lambda x: x[1], reverse=True)
+                facts_map[eid] = [f[0] for f in facts_list[:7]]
 
             # Batch fetch knowledge
             cur.execute(

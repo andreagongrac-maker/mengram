@@ -190,38 +190,48 @@ profile = m.get_profile()             # instant system prompt
         if not results or len(results) <= 1:
             return results
 
-        # Try Cohere Rerank first (cross-encoder, faster than LLM)
+        # Try Cohere Rerank first — fact-level (cross-encoder, more precise)
         cohere_key = os.environ.get("COHERE_API_KEY", "")
         if cohere_key:
             try:
                 import cohere
                 co = cohere.ClientV2(api_key=cohere_key)
 
-                # Build document texts for reranking
-                documents = []
-                for r in results:
-                    facts_str = "; ".join(r.get("facts", [])[:5])
-                    rels_str = "; ".join(
-                        f"{rel.get('type', '')} {rel.get('target', '')}"
-                        for rel in r.get("relations", [])[:3]
-                    )
-                    doc = f"{r['entity']} ({r['type']}): {facts_str}"
-                    if rels_str:
-                        doc += f" | {rels_str}"
-                    documents.append(doc)
+                # Build one document per fact (not per entity)
+                fact_docs = []  # [(entity_idx, fact_idx, doc_text)]
+                for eidx, r in enumerate(results):
+                    name = r.get("entity", "")
+                    for fidx, fact in enumerate(r.get("facts", [])):
+                        fact_docs.append((eidx, fidx, f"{name}: {fact}"))
 
+                if not fact_docs:
+                    return results
+
+                documents = [fd[2] for fd in fact_docs]
                 resp = co.rerank(
                     model="rerank-v3.5",
                     query=query,
                     documents=documents,
-                    top_n=len(results),
+                    top_n=min(len(documents), 50),
                 )
 
-                # Filter by relevance score and reorder
-                reranked = []
+                # Group relevant facts back by entity
+                entity_facts = {}  # entity_idx → [(fact_text, score)]
                 for item in resp.results:
-                    if item.relevance_score >= 0.1:
-                        reranked.append(results[item.index])
+                    if item.relevance_score >= 0.05:
+                        eidx, fidx, _ = fact_docs[item.index]
+                        fact_text = results[eidx]["facts"][fidx]
+                        if eidx not in entity_facts:
+                            entity_facts[eidx] = []
+                        entity_facts[eidx].append((fact_text, item.relevance_score))
+
+                # Rebuild results: only entities with relevant facts, facts reordered
+                reranked = []
+                for eidx in sorted(entity_facts.keys()):
+                    r = dict(results[eidx])
+                    scored_facts = sorted(entity_facts[eidx], key=lambda x: x[1], reverse=True)
+                    r["facts"] = [f[0] for f in scored_facts[:7]]
+                    reranked.append(r)
                 return reranked if reranked else results
 
             except Exception as e:
