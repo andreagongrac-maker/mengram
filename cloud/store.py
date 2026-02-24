@@ -1476,9 +1476,24 @@ class CloudStore:
                 knowledge=knowledge,
             )
 
-    def get_all_entities(self, user_id: str, sub_user_id: str = "default") -> list[dict]:
-        """List all entities with counts (excludes internal entities)."""
+    def get_all_entities(self, user_id: str, sub_user_id: str = "default",
+                         limit: int = None, offset: int = 0) -> list[dict] | tuple[list[dict], int]:
+        """List all entities with counts (excludes internal entities).
+        If limit is provided, returns (entities, total) tuple with SQL-side pagination."""
         with self._cursor(dict_cursor=True) as cur:
+            if limit is not None:
+                cur.execute(
+                    "SELECT COUNT(*) FROM entity_overview WHERE user_id = %s AND sub_user_id = %s AND name NOT LIKE '\\_%%'",
+                    (user_id, sub_user_id)
+                )
+                total = cur.fetchone()[0]
+                cur.execute(
+                    """SELECT name, type, facts_count, knowledge_count, relations_count
+                       FROM entity_overview WHERE user_id = %s AND sub_user_id = %s AND name NOT LIKE '\\_%%'
+                       ORDER BY updated_at DESC LIMIT %s OFFSET %s""",
+                    (user_id, sub_user_id, limit, offset)
+                )
+                return [dict(r) for r in cur.fetchall()], total
             cur.execute(
                 """SELECT name, type, facts_count, knowledge_count, relations_count
                    FROM entity_overview WHERE user_id = %s AND sub_user_id = %s AND name NOT LIKE '\\_%%'
@@ -2940,16 +2955,32 @@ SEMANTIC MEMORY (facts about the user):
 
     # ---- Graph ----
 
-    def get_graph(self, user_id: str, sub_user_id: str = "default") -> dict:
-        """Get knowledge graph (nodes + edges) for visualization."""
+    def get_graph(self, user_id: str, sub_user_id: str = "default", limit: int = 150) -> dict:
+        """Get knowledge graph (nodes + edges) for visualization. Cached 30s."""
+        cache_key = f"graph:{user_id}:{sub_user_id}:{limit}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
         with self._cursor(dict_cursor=True) as cur:
+            # Total node count
             cur.execute(
-                """SELECT name, type, facts_count, knowledge_count
-                   FROM entity_overview WHERE user_id = %s AND sub_user_id = %s""",
+                "SELECT COUNT(*) FROM entity_overview WHERE user_id = %s AND sub_user_id = %s",
                 (user_id, sub_user_id)
             )
-            nodes = [dict(r) for r in cur.fetchall()]
+            total_nodes = cur.fetchone()[0]
 
+            # Top nodes by facts_count (most connected first)
+            cur.execute(
+                """SELECT name, type, facts_count, knowledge_count
+                   FROM entity_overview WHERE user_id = %s AND sub_user_id = %s
+                   ORDER BY facts_count DESC LIMIT %s""",
+                (user_id, sub_user_id, limit)
+            )
+            nodes = [dict(r) for r in cur.fetchall()]
+            node_names = {n["name"] for n in nodes}
+
+            # Edges only between returned nodes
             cur.execute(
                 """SELECT es.name as source, et.name as target, r.type, r.description
                    FROM relations r
@@ -2958,13 +2989,28 @@ SEMANTIC MEMORY (facts about the user):
                    WHERE es.user_id = %s AND es.sub_user_id = %s""",
                 (user_id, sub_user_id)
             )
-            edges = [dict(r) for r in cur.fetchall()]
+            edges = [dict(r) for r in cur.fetchall() if r["source"] in node_names and r["target"] in node_names]
 
-            return {"nodes": nodes, "edges": edges}
+            result = {"nodes": nodes, "edges": edges, "total_nodes": total_nodes}
+            self.cache.set(cache_key, result, ttl=30)
+            return result
 
-    def get_feed(self, user_id: str, limit: int = 50, sub_user_id: str = "default") -> dict:
-        """Get recent facts with entity info for Memory Feed."""
+    def get_feed(self, user_id: str, limit: int = 50, offset: int = 0, sub_user_id: str = "default") -> dict:
+        """Get recent facts with entity info for Memory Feed. Cached 15s."""
+        cache_key = f"feed:{user_id}:{sub_user_id}:{offset}:{limit}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
         with self._cursor(dict_cursor=True) as cur:
+            cur.execute(
+                """SELECT COUNT(*) FROM facts f
+                   JOIN entities e ON e.id = f.entity_id
+                   WHERE e.user_id = %s AND e.sub_user_id = %s AND f.archived = FALSE AND (f.expires_at IS NULL OR f.expires_at > NOW())""",
+                (user_id, sub_user_id)
+            )
+            total = cur.fetchone()[0]
+
             cur.execute(
                 """SELECT f.id, f.content, f.created_at, f.archived,
                           f.importance, f.access_count,
@@ -2973,8 +3019,8 @@ SEMANTIC MEMORY (facts about the user):
                    JOIN entities e ON e.id = f.entity_id
                    WHERE e.user_id = %s AND e.sub_user_id = %s AND f.archived = FALSE AND (f.expires_at IS NULL OR f.expires_at > NOW())
                    ORDER BY f.created_at DESC
-                   LIMIT %s""",
-                (user_id, sub_user_id, limit)
+                   LIMIT %s OFFSET %s""",
+                (user_id, sub_user_id, limit, offset)
             )
             items = []
             for row in cur.fetchall():
@@ -2987,7 +3033,9 @@ SEMANTIC MEMORY (facts about the user):
                     "access_count": row["access_count"] or 0,
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                 })
-            return {"feed": items, "total": len(items)}
+            result = {"feed": items, "total": total}
+            self.cache.set(cache_key, result, ttl=15)
+            return result
 
     # =====================================================
     # EPISODIC MEMORY v2.5

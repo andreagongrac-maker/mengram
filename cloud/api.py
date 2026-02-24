@@ -1516,9 +1516,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                       ctx: AuthContext = Depends(auth)):
         """Get all memories (entities). Supports pagination with limit/offset."""
         user_id = ctx.user_id
-        entities = store.get_all_entities(user_id, sub_user_id=sub_user_id)
-        total = len(entities)
-        entities = entities[offset:offset + limit]
+        entities, total = store.get_all_entities(user_id, sub_user_id=sub_user_id, limit=limit, offset=offset)
         store.log_usage(user_id, "get_all")
         return {"memories": entities, "total": total, "limit": limit, "offset": offset}
 
@@ -2041,16 +2039,19 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         return store.get_stats(user_id, sub_user_id=sub_user_id)
 
     @app.get("/v1/graph", tags=["Memory"])
-    async def graph(sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
-        """Knowledge graph for visualization."""
+    async def graph(sub_user_id: str = Query("default"),
+                    limit: int = Query(150, ge=1, le=500),
+                    ctx: AuthContext = Depends(auth)):
+        """Knowledge graph for visualization. Returns top N nodes by connections."""
         user_id = ctx.user_id
-        return store.get_graph(user_id, sub_user_id=sub_user_id)
+        return store.get_graph(user_id, sub_user_id=sub_user_id, limit=limit)
 
     @app.get("/v1/feed", tags=["Memory"])
-    async def feed(limit: int = 50, sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
+    async def feed(limit: int = 50, offset: int = Query(0, ge=0),
+                   sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Memory feed — recent facts with timestamps for dashboard."""
         user_id = ctx.user_id
-        return store.get_feed(user_id, limit=min(limit, 100), sub_user_id=sub_user_id)
+        return store.get_feed(user_id, limit=min(limit, 100), offset=offset, sub_user_id=sub_user_id)
 
     @app.get("/v1/profile/{target_user_id}", tags=["Memory"])
     async def get_profile(target_user_id: str, force: bool = False, sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):

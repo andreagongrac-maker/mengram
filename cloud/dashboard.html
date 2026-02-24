@@ -694,6 +694,16 @@ async function searchCmdEntities(q) {
         }
     } catch (e) {}
 }
+// ---- Client-side tab cache ----
+let _tabCache = {};
+let _tabCacheTime = {};
+const TAB_CACHE_TTL = 60000; // 60 seconds
+
+function _isCached(key) {
+    return _tabCache[key] && (Date.now() - (_tabCacheTime[key]||0)) < TAB_CACHE_TTL;
+}
+function _invalidateCache(key) { delete _tabCache[key]; delete _tabCacheTime[key]; }
+
 function switchTabDirect(t) {
     document.querySelectorAll('.nav-item').forEach((n, i) => {
         const tabs = ['feed','agents','insights','graph','entities','procedures','billing','settings'];
@@ -701,8 +711,8 @@ function switchTabDirect(t) {
     });
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     document.getElementById('tab-' + t).classList.add('active');
-    if (t === 'graph') loadGraph();
-    if (t === 'entities') loadEntities();
+    if (t === 'graph' && !_isCached('graph')) loadGraph();
+    if (t === 'entities' && !_isCached('entities')) loadEntities();
     if (t === 'insights') loadInsights();
     if (t === 'agents') loadAgentHistory();
     if (t === 'procedures') loadProcedures();
@@ -762,8 +772,8 @@ function switchTab(t) {
     // Close mobile menu on tab switch
     const sidebar = document.querySelector('.sidebar');
     if (sidebar.classList.contains('open')) toggleMobileMenu();
-    if(t==='graph') loadGraph();
-    if(t==='entities') loadEntities();
+    if(t==='graph' && !_isCached('graph')) loadGraph();
+    if(t==='entities' && !_isCached('entities')) loadEntities();
     if(t==='insights') loadInsights();
     if(t==='agents') loadAgentHistory();
     if(t==='procedures') loadProcedures();
@@ -1016,34 +1026,69 @@ async function loadStats() {
 }
 
 // ---- Feed ----
+let _feedOffset = 0;
+const FEED_PAGE = 30;
+
+function _renderFeedItem(it) {
+    const bc = 'b-'+(it.entity_type||'concept');
+    const tm = it.created_at ? new Date(it.created_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
+    const imp = it.importance || 0.5;
+    const impColor = imp >= 0.8 ? '#a855f7' : imp >= 0.6 ? '#6366f1' : imp >= 0.4 ? '#64748b' : '#334155';
+    const impLabel = imp >= 0.8 ? '●●●' : imp >= 0.6 ? '●●○' : imp >= 0.4 ? '●○○' : '○○○';
+    const accInfo = it.access_count > 0 ? ` · recalled ${it.access_count}×` : '';
+    return `<div class="feed-item">
+        <span class="feed-badge ${bc}">${esc(it.entity)}</span>
+        <div class="feed-content"><div class="feed-fact">${esc(it.fact)}</div><div class="feed-meta">${tm}<span style="color:${impColor};margin-left:8px" title="Importance: ${imp}">${impLabel}</span>${accInfo}</div></div>
+        <button class="feed-del" onclick="archFact('${escA(it.id)}','${escA(it.entity)}','${escA(it.fact)}',this)" title="Delete">✕</button>
+    </div>`;
+}
+
 async function loadFeed() {
+    _feedOffset = 0;
     const box = document.getElementById('feed-box');
     box.innerHTML = `<div style="padding:16px;">${[1,2,3,4,5].map(()=>'<div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;"><div style="width:80px;height:24px;background:var(--bg-elevated);border-radius:6px;animation:pulse 1.5s infinite;"></div><div style="flex:1;height:16px;background:var(--bg-elevated);border-radius:4px;animation:pulse 1.5s infinite;"></div></div>').join('')}</div><style>@keyframes pulse{0%,100%{opacity:0.4}50%{opacity:0.8}}</style>`;
     try {
-        const d = await (await fetch(`${API}/v1/feed?limit=100`,{headers:H()})).json();
+        const d = await (await fetch(`${API}/v1/feed?limit=${FEED_PAGE}&offset=0`,{headers:H()})).json();
         if(!d.feed||!d.feed.length) {
             box.innerHTML = `<div class="empty"><div class="eicon">📋</div><h3>Your memory is empty</h3><p>Use <a href="/">Claude Desktop MCP</a> or the <a href="https://pypi.org/project/mengram-ai/">Python API</a> to start building your AI memory.</p></div>`;
             return;
         }
-        let h='<div class="feed-list">',last='';
+        _feedOffset = d.feed.length;
+        let h='<div class="feed-list" id="feed-list">',last='';
         for(const it of d.feed) {
             const dt = it.created_at ? new Date(it.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'Unknown';
             if(dt!==last) { h+=`<div class="feed-date">${dt}</div>`; last=dt; }
-            const bc = 'b-'+(it.entity_type||'concept');
-            const tm = it.created_at ? new Date(it.created_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
-            const imp = it.importance || 0.5;
-            const impColor = imp >= 0.8 ? '#a855f7' : imp >= 0.6 ? '#6366f1' : imp >= 0.4 ? '#64748b' : '#334155';
-            const impLabel = imp >= 0.8 ? '●●●' : imp >= 0.6 ? '●●○' : imp >= 0.4 ? '●○○' : '○○○';
-            const accInfo = it.access_count > 0 ? ` · recalled ${it.access_count}×` : '';
-            h+=`<div class="feed-item">
-                <span class="feed-badge ${bc}">${esc(it.entity)}</span>
-                <div class="feed-content"><div class="feed-fact">${esc(it.fact)}</div><div class="feed-meta">${tm}<span style="color:${impColor};margin-left:8px" title="Importance: ${imp}">${impLabel}</span>${accInfo}</div></div>
-                <button class="feed-del" onclick="archFact('${escA(it.id)}','${escA(it.entity)}','${escA(it.fact)}',this)" title="Delete">✕</button>
-            </div>`;
+            h += _renderFeedItem(it);
         }
         h+='</div>';
+        if(_feedOffset < d.total) {
+            h+=`<div style="text-align:center;padding:16px;"><button class="btn" onclick="loadMoreFeed()" id="feed-more-btn" style="background:var(--bg-elevated);color:var(--text-2);border:1px solid var(--border);padding:8px 24px;border-radius:8px;cursor:pointer;font-size:13px;">Load more (${d.total - _feedOffset} remaining)</button></div>`;
+        }
         box.innerHTML=h;
     } catch(e) { box.innerHTML='<div class="empty"><p>Failed to load feed.</p></div>'; }
+}
+
+async function loadMoreFeed() {
+    const btn = document.getElementById('feed-more-btn');
+    if(btn) btn.textContent = 'Loading...';
+    try {
+        const d = await (await fetch(`${API}/v1/feed?limit=${FEED_PAGE}&offset=${_feedOffset}`,{headers:H()})).json();
+        if(!d.feed||!d.feed.length) { if(btn) btn.parentElement.remove(); return; }
+        const list = document.getElementById('feed-list');
+        let h='',last='';
+        // Get last date from existing feed
+        const dates = list.querySelectorAll('.feed-date');
+        if(dates.length) last = dates[dates.length-1].textContent;
+        for(const it of d.feed) {
+            const dt = it.created_at ? new Date(it.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'Unknown';
+            if(dt!==last) { h+=`<div class="feed-date">${dt}</div>`; last=dt; }
+            h += _renderFeedItem(it);
+        }
+        list.insertAdjacentHTML('beforeend', h);
+        _feedOffset += d.feed.length;
+        if(_feedOffset >= d.total) { if(btn) btn.parentElement.remove(); }
+        else if(btn) { btn.textContent = `Load more (${d.total - _feedOffset} remaining)`; }
+    } catch(e) { if(btn) btn.textContent = 'Failed, try again'; }
 }
 
 async function archFact(id,entity,fact,btn) {
@@ -1051,6 +1096,7 @@ async function archFact(id,entity,fact,btn) {
         try {
             await fetch(`${API}/v1/archive_fact`,{method:'POST',headers:H(),body:JSON.stringify({entity_name:entity,fact_content:fact})});
             btn.closest('.feed-item').style.display='none';
+            _invalidateCache('graph'); _invalidateCache('entities');
             loadStats();
             showToast('Fact deleted', 'success');
         } catch(e){ showToast('Failed to delete fact', 'error'); }
@@ -1061,6 +1107,8 @@ async function archFact(id,entity,fact,btn) {
 async function loadGraph() {
     try {
         const d = await (await fetch(`${API}/v1/graph`,{headers:H()})).json();
+        _tabCache.graph = d;
+        _tabCacheTime.graph = Date.now();
         renderGraph(d);
     } catch(e){}
 }
@@ -1068,11 +1116,23 @@ async function loadGraph() {
 function renderGraph(data) {
     const box = document.getElementById('graph-box');
     box.querySelectorAll('svg').forEach(s=>s.remove());
+    // Remove old graph info badge
+    const oldInfo = box.querySelector('.graph-info');
+    if(oldInfo) oldInfo.remove();
     const W=box.clientWidth, HH=box.clientHeight;
     const tc = {person:'#60a5fa',project:'#a855f7',technology:'#34d399',company:'#fb923c',concept:'#f472b6'};
     const nodes = data.nodes.map(n=>({id:n.name,type:n.type,r:6+Math.min((n.facts_count||0)*1.5,18),c:tc[n.type]||'#888'}));
     const ns = new Set(nodes.map(n=>n.id));
     const links = data.edges.filter(e=>ns.has(e.source)&&ns.has(e.target)).map(e=>({source:e.source,target:e.target,type:e.type}));
+
+    // Show info badge if graph is truncated
+    if(data.total_nodes && data.total_nodes > nodes.length) {
+        const info = document.createElement('div');
+        info.className = 'graph-info';
+        info.style.cssText = 'position:absolute;top:16px;right:16px;background:rgba(5,5,10,0.8);color:var(--text-2);padding:6px 12px;border-radius:8px;font-size:12px;backdrop-filter:blur(8px);';
+        info.textContent = `Showing ${nodes.length} of ${data.total_nodes} entities`;
+        box.appendChild(info);
+    }
 
     const svg = d3.select(box).append('svg').attr('width',W).attr('height',HH);
     const g = svg.append('g');
@@ -1113,22 +1173,54 @@ function renderGraph(data) {
 }
 
 // ---- Entities ----
+let _entOffset = 0;
+let _entTotal = 0;
+const ENT_PAGE = 24;
+
+function _renderEntityCard(e) {
+    const bc='b-'+(e.type||'concept');
+    const facts = (e.facts||[]).slice(0,3).join(' · ');
+    return `<div class="e-card" onclick="openEntity('${escA(e.name)}')">
+        <div class="e-head"><span class="e-name">${esc(e.name)}</span><span class="e-tag ${bc}">${e.type}</span></div>
+        <div class="e-facts">${esc(facts)||'No facts yet'}</div>
+        <div class="e-count">${e.facts_count||e.facts?.length||0} facts</div>
+    </div>`;
+}
+
 async function loadEntities() {
+    _entOffset = 0;
     const grid = document.getElementById('ent-grid');
     try {
-        const d = await (await fetch(`${API}/v1/memories`,{headers:H()})).json();
+        const d = await (await fetch(`${API}/v1/memories?limit=${ENT_PAGE}&offset=0`,{headers:H()})).json();
         const ents = d.memories||[];
+        _entTotal = d.total || ents.length;
+        _entOffset = ents.length;
         if(!ents.length) { grid.innerHTML='<div class="empty"><div class="eicon">📦</div><h3>No entities yet</h3></div>'; return; }
-        grid.innerHTML = ents.map(e=>{
-            const bc='b-'+(e.type||'concept');
-            const facts = (e.facts||[]).slice(0,3).join(' · ');
-            return `<div class="e-card" onclick="openEntity('${escA(e.name)}')">
-                <div class="e-head"><span class="e-name">${esc(e.name)}</span><span class="e-tag ${bc}">${e.type}</span></div>
-                <div class="e-facts">${esc(facts)||'No facts yet'}</div>
-                <div class="e-count">${e.facts_count||e.facts?.length||0} facts</div>
-            </div>`;
-        }).join('');
+        let h = ents.map(e => _renderEntityCard(e)).join('');
+        if(_entOffset < _entTotal) {
+            h+=`<div id="ent-more-wrap" style="grid-column:1/-1;text-align:center;padding:12px;"><button class="btn" onclick="loadMoreEntities()" id="ent-more-btn" style="background:var(--bg-elevated);color:var(--text-2);border:1px solid var(--border);padding:8px 24px;border-radius:8px;cursor:pointer;font-size:13px;">Load more (${_entTotal - _entOffset} remaining)</button></div>`;
+        }
+        grid.innerHTML = h;
+        _tabCache.entities = true;
+        _tabCacheTime.entities = Date.now();
     } catch(e) { grid.innerHTML='<div class="empty"><p>Failed to load.</p></div>'; }
+}
+
+async function loadMoreEntities() {
+    const btn = document.getElementById('ent-more-btn');
+    if(btn) btn.textContent = 'Loading...';
+    try {
+        const d = await (await fetch(`${API}/v1/memories?limit=${ENT_PAGE}&offset=${_entOffset}`,{headers:H()})).json();
+        const ents = d.memories||[];
+        if(!ents.length) { const w=document.getElementById('ent-more-wrap'); if(w) w.remove(); return; }
+        const grid = document.getElementById('ent-grid');
+        const wrap = document.getElementById('ent-more-wrap');
+        const h = ents.map(e => _renderEntityCard(e)).join('');
+        if(wrap) wrap.insertAdjacentHTML('beforebegin', h);
+        _entOffset += ents.length;
+        if(_entOffset >= _entTotal) { if(wrap) wrap.remove(); }
+        else if(btn) { btn.textContent = `Load more (${_entTotal - _entOffset} remaining)`; }
+    } catch(e) { if(btn) btn.textContent = 'Failed, try again'; }
 }
 
 // ---- Modal ----
@@ -1166,7 +1258,7 @@ async function archFactM(entity,fact,btn) {
 }
 async function delEntity(name) {
     showConfirm('Delete Entity', `Delete "${name}" and ALL its data? This cannot be undone.`, async () => {
-        try { await fetch(`${API}/v1/entity/${encodeURIComponent(name)}`,{method:'DELETE',headers:H()}); closeModal(); loadAll(); showToast(`"${name}" deleted`, 'success'); } catch(e){ showToast('Failed to delete', 'error'); }
+        try { await fetch(`${API}/v1/entity/${encodeURIComponent(name)}`,{method:'DELETE',headers:H()}); closeModal(); _invalidateCache('graph'); _invalidateCache('entities'); loadAll(); showToast(`"${name}" deleted`, 'success'); } catch(e){ showToast('Failed to delete', 'error'); }
     }, true);
 }
 async function shareEntityDialog(name) {
