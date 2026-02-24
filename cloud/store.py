@@ -2798,6 +2798,72 @@ SEMANTIC MEMORY (facts about the user):
         self.cache.invalidate(f"usage:{user_id}:")
         return result
 
+    def check_and_increment(self, user_id: str, action: str, max_allowed: int, count: int = 1) -> int:
+        """Atomic check-and-increment: only increments if within quota.
+        Returns new count after increment.
+        Raises ValueError if quota would be exceeded."""
+        if max_allowed == -1:
+            return self.increment_usage(user_id, action, count)
+
+        column = f"{action}_count"
+        valid_columns = {"add_count", "search_count", "agent_count",
+                        "reflect_count", "dedup_count", "reindex_count"}
+        if column not in valid_columns:
+            raise ValueError(f"Invalid action: {action}")
+
+        period_start = datetime.date.today().replace(day=1)
+        with self._cursor() as cur:
+            # Atomic: increment only if current value < max_allowed
+            cur.execute(
+                f"""INSERT INTO usage_counters (user_id, period_start, {column})
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, period_start)
+                    DO UPDATE SET {column} = usage_counters.{column} + %s
+                    WHERE usage_counters.{column} < %s
+                    RETURNING {column}""",
+                (user_id, period_start, count, count, max_allowed)
+            )
+            row = cur.fetchone()
+            if row is None:
+                # Quota exceeded — read current value for error message
+                cur.execute(
+                    f"SELECT {column} FROM usage_counters WHERE user_id = %s AND period_start = %s",
+                    (user_id, period_start)
+                )
+                r = cur.fetchone()
+                current = r[0] if r else 0
+                raise ValueError(f"quota_exceeded:{action}:{current}:{max_allowed}")
+            result = row[0]
+        self.cache.invalidate(f"usage:{user_id}:")
+        return result
+
+    def count_distinct_sub_users(self, user_id: str) -> int:
+        """Count distinct sub_user_ids used by this user (across entities table).
+        Cached 60s to avoid repeated COUNT DISTINCT queries."""
+        cache_key = f"sub_users:{user_id}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        with self._cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(DISTINCT sub_user_id) FROM entities
+                WHERE user_id = %s AND sub_user_id != 'default'
+            """, (user_id,))
+            row = cur.fetchone()
+            count = row[0] if row else 0
+        self.cache.set(cache_key, count, ttl=60)
+        return count
+
+    def is_known_sub_user(self, user_id: str, sub_user_id: str) -> bool:
+        """Check if a sub_user_id already exists for this user."""
+        with self._cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM entities
+                WHERE user_id = %s AND sub_user_id = %s
+                LIMIT 1
+            """, (user_id, sub_user_id))
+            return cur.fetchone() is not None
+
     def get_usage_count(self, user_id: str, action: str) -> int:
         """Get current month's usage count for an action. Cached 10s."""
         column = f"{action}_count"
@@ -4077,10 +4143,18 @@ Be specific and personal, not generic. No markdown, just JSON."""
             )
             return cur.rowcount > 0
 
+    # Shared thread pool for webhook delivery (limits concurrent outbound connections)
+    _webhook_pool = None
+
+    def _get_webhook_pool(self):
+        if self._webhook_pool is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._webhook_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="webhook")
+        return self._webhook_pool
+
     def fire_webhooks(self, user_id: str, event_type: str, payload: dict):
-        """Fire all active webhooks for this event type. Non-blocking."""
+        """Fire all active webhooks for this event type. Non-blocking, thread-pool limited."""
         self.ensure_webhooks_table()
-        import threading
         import urllib.request
 
         with self._cursor(dict_cursor=True) as cur:
@@ -4101,6 +4175,13 @@ Be specific and personal, not generic. No markdown, just JSON."""
         }).encode("utf-8")
 
         def _send(hook_id, url, secret):
+            # Validate URL before sending (prevent SSRF)
+            import urllib.parse
+            parsed = urllib.parse.urlparse(url)
+            hostname = parsed.hostname or ""
+            if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("10.") or hostname.startswith("172.") or hostname.startswith("192.168.") or hostname.endswith(".internal"):
+                logger.warning(f"⚠️ Webhook {hook_id} blocked: internal URL {hostname}")
+                return
             try:
                 req = urllib.request.Request(
                     url, data=data,
@@ -4129,13 +4210,9 @@ Be specific and personal, not generic. No markdown, just JSON."""
                 except Exception:
                     pass
 
+        pool = self._get_webhook_pool()
         for hook in hooks:
-            t = threading.Thread(
-                target=_send,
-                args=(hook["id"], hook["url"], hook["secret"] or ""),
-                daemon=True
-            )
-            t.start()
+            pool.submit(_send, hook["id"], hook["url"], hook["secret"] or "")
 
         logger.info(f"🔔 Fired {len(hooks)} webhooks for {event_type} ({user_id})")
 
@@ -4942,6 +5019,20 @@ Be specific and personal, not generic. No markdown, just JSON."""
             sub_user_id=sub_user_id,
         )
         return 1 if tid > 0 else 0
+
+    def process_user_triggers(self, user_id: str) -> dict:
+        """Process pending triggers for a specific user only. Returns stats."""
+        pending = self.get_pending_triggers(user_id=user_id)
+        fired = 0
+        errors = 0
+        for trigger in pending:
+            try:
+                self.fire_trigger(trigger["id"])
+                fired += 1
+            except Exception as e:
+                logger.error(f"⚠️ Trigger {trigger['id']} failed: {e}")
+                errors += 1
+        return {"processed": len(pending), "fired": fired, "errors": errors}
 
     def process_all_triggers(self) -> dict:
         """Process all pending triggers across all users. Returns stats."""

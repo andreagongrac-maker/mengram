@@ -44,9 +44,9 @@ class AuthContext:
     rate_limit: int   # per-minute rate limit
 
 PLAN_QUOTAS = {
-    "free":     {"adds": 100,   "searches": 500,    "agents": 5,   "reflects": 5,   "dedups": 2,   "reindexes": 2,   "rate_limit": 30},
-    "pro":      {"adds": 1_000, "searches": 10_000, "agents": 50,  "reflects": 30,  "dedups": 20,  "reindexes": 10,  "rate_limit": 120},
-    "business": {"adds": 5_000, "searches": 30_000, "agents": -1,  "reflects": -1,  "dedups": -1,  "reindexes": -1,  "rate_limit": 300},
+    "free":     {"adds": 100,   "searches": 500,    "agents": 5,   "reflects": 5,   "dedups": 2,   "reindexes": 2,   "rate_limit": 30,  "webhooks": 0,  "teams": 0,  "sub_users": 3},
+    "pro":      {"adds": 1_000, "searches": 10_000, "agents": 50,  "reflects": 30,  "dedups": 20,  "reindexes": 10,  "rate_limit": 120, "webhooks": 10, "teams": 5,  "sub_users": 50},
+    "business": {"adds": 5_000, "searches": 30_000, "agents": -1,  "reflects": -1,  "dedups": -1,  "reindexes": -1,  "rate_limit": 300, "webhooks": 50, "teams": -1, "sub_users": -1},
 }
 
 
@@ -352,7 +352,8 @@ Be strict — only include entities that directly answer or relate to the query.
     # ---- Quota checking ----
 
     def check_quota(ctx: AuthContext, action: str):
-        """Check if user has quota remaining. Raises HTTP 402 if exceeded."""
+        """Check if user has quota remaining. Raises HTTP 402 if exceeded.
+        Note: prefer use_quota() which atomically checks AND increments."""
         quota_map = {
             "add": "adds", "search": "searches", "agent": "agents",
             "reflect": "reflects", "dedup": "dedups", "reindex": "reindexes",
@@ -366,18 +367,43 @@ Be strict — only include entities that directly answer or relate to the query.
             return  # unlimited
         current = store.get_usage_count(ctx.user_id, action)
         if current >= max_allowed:
-            raise HTTPException(
-                status_code=402,
-                detail={
-                    "error": "quota_exceeded",
-                    "action": action,
-                    "limit": max_allowed,
-                    "used": current,
-                    "plan": ctx.plan,
-                    "upgrade_url": "https://mengram.io/#pricing",
-                    "message": f"Monthly {action} limit reached ({max_allowed}). Upgrade your plan at https://mengram.io/#pricing",
-                }
-            )
+            _raise_quota_error(action, max_allowed, current, ctx.plan)
+
+    def use_quota(ctx: AuthContext, action: str, count: int = 1):
+        """Atomically check quota AND increment usage in one operation.
+        Prevents race conditions where concurrent requests bypass limits."""
+        quota_map = {
+            "add": "adds", "search": "searches", "agent": "agents",
+            "reflect": "reflects", "dedup": "dedups", "reindex": "reindexes",
+        }
+        quota_key = quota_map.get(action)
+        if not quota_key:
+            return
+        plan_quotas = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
+        max_allowed = plan_quotas.get(quota_key, 0)
+        try:
+            store.check_and_increment(ctx.user_id, action, max_allowed, count)
+        except ValueError as e:
+            parts = str(e).split(":")
+            if parts[0] == "quota_exceeded":
+                current = int(parts[2]) if len(parts) > 2 else 0
+                limit = int(parts[3]) if len(parts) > 3 else max_allowed
+                _raise_quota_error(action, limit, current, ctx.plan)
+            raise
+
+    def _raise_quota_error(action, max_allowed, current, plan):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "quota_exceeded",
+                "action": action,
+                "limit": max_allowed,
+                "used": current,
+                "plan": plan,
+                "upgrade_url": "https://mengram.io/#pricing",
+                "message": f"Monthly {action} limit reached ({max_allowed}). Upgrade your plan at https://mengram.io/#pricing",
+            }
+        )
 
     # ---- Auth middleware ----
 
@@ -854,10 +880,27 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         Returns immediately with job_id, processes in background.
         """
         user_id = ctx.user_id
-        check_quota(ctx, "add")
+        use_quota(ctx, "add")  # atomic check+increment before background processing
         import threading
 
         sub_uid = req.user_id or "default"
+
+        # Enforce sub-user limit per plan
+        if sub_uid != "default":
+            plan_quotas = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
+            max_sub_users = plan_quotas.get("sub_users", 3)
+            if max_sub_users != -1:
+                distinct_sub_users = store.count_distinct_sub_users(user_id)
+                # Check if this sub_user_id is new (not already tracked)
+                if distinct_sub_users >= max_sub_users:
+                    known = store.is_known_sub_user(user_id, sub_uid)
+                    if not known:
+                        raise HTTPException(status_code=402, detail={
+                            "error": "quota_exceeded", "action": "sub_users",
+                            "limit": max_sub_users, "used": distinct_sub_users, "plan": ctx.plan,
+                            "message": f"Sub-user limit reached ({max_sub_users}). Upgrade your plan.",
+                            "upgrade_url": "https://mengram.io/#pricing",
+                        })
         job_id = store.create_job(user_id, "add")
         # Build metadata from categories
         metadata = {}
@@ -1028,7 +1071,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                             store.save_embedding(entity_id, chunk_text, emb)
 
                 store.log_usage(user_id, "add")
-                store.increment_usage(user_id, "add")
+                # increment_usage already done atomically in use_quota above
 
                 # ---- Raw Conversation Chunk: save for fallback retrieval ----
                 try:
@@ -1202,12 +1245,19 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                     "episodes_linked": episodes_linked,
                 })
 
-                # Auto-trigger reflection if needed
+                # Auto-trigger reflection if needed (respects reflect quota)
                 try:
                     if store.should_reflect(user_id, sub_user_id=sub_uid):
-                        logger.info(f"✨ Auto-reflection triggered for {user_id}")
-                        extractor2 = get_llm()
-                        store.generate_reflections(user_id, extractor2.llm, sub_user_id=sub_uid)
+                        # Check reflect quota before consuming LLM resources
+                        plan_quotas_local = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
+                        max_reflects = plan_quotas_local.get("reflects", 0)
+                        try:
+                            store.check_and_increment(user_id, "reflect", max_reflects)
+                            logger.info(f"✨ Auto-reflection triggered for {user_id}")
+                            extractor2 = get_llm()
+                            store.generate_reflections(user_id, extractor2.llm, sub_user_id=sub_uid)
+                        except ValueError:
+                            logger.info(f"⏭️ Auto-reflection skipped (reflect quota reached) for {user_id}")
                 except Exception as e:
                     logger.error(f"⚠️ Auto-reflection failed: {e}")
 
@@ -1288,7 +1338,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     async def search(req: SearchRequest, ctx: AuthContext = Depends(auth)):
         """Semantic search across memories with LLM re-ranking."""
         user_id = ctx.user_id
-        check_quota(ctx, "search")
+        use_quota(ctx, "search")  # atomic check+increment
         import hashlib as _hashlib
 
         sub_uid = req.user_id or "default"
@@ -1297,7 +1347,6 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         cached = store.cache.get(cache_key)
         if cached:
             store.log_usage(user_id, "search")
-            store.increment_usage(user_id, "search")
             return {"results": cached}
 
         embedder = get_embedder()
@@ -1368,7 +1417,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         # Cache results in Redis (TTL 30s)
         store.cache.set(cache_key, results, ttl=30)
         store.log_usage(user_id, "search")
-        store.increment_usage(user_id, "search")
+        # increment already done atomically in use_quota above
 
         return {"results": results}
 
@@ -1385,12 +1434,13 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     async def reindex(sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Re-generate all embeddings (includes relations now)."""
         user_id = ctx.user_id
-        check_quota(ctx, "reindex")
         embedder = get_embedder()
         if not embedder:
             raise HTTPException(status_code=500, detail="No embedder configured")
 
+        # Count entities first, use_quota with actual count
         entities = store.get_all_entities_full(user_id, sub_user_id=sub_user_id)
+        use_quota(ctx, "reindex")  # atomic check+increment
         count = 0
         for entity in entities:
             name = entity["entity"]
@@ -1413,14 +1463,14 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                 store.save_embedding(entity_id, chunk, emb)
             count += 1
 
-        store.increment_usage(user_id, "reindex")
+        # increment already done in use_quota above
         return {"reindexed": count}
 
     @app.post("/v1/dedup", tags=["Memory"])
     async def dedup(sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Find and merge duplicate entities."""
         user_id = ctx.user_id
-        check_quota(ctx, "dedup")
+        use_quota(ctx, "dedup")  # atomic check+increment
         entities = store.get_all_entities(user_id, sub_user_id=sub_user_id)
         names = [(e["name"], e.get("type", "unknown")) for e in entities]
         merged = []
@@ -1452,7 +1502,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                         merged.append(f"{shorter} → {canonical}")
                         processed.add(shorter)
 
-        store.increment_usage(user_id, "dedup")
+        # increment already done in use_quota above
         return {"merged": merged, "count": len(merged)}
 
     @app.delete("/v1/entity/{name}", tags=["Memory"])
@@ -1523,20 +1573,19 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     async def dedup_entity(name: str, sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Use LLM to deduplicate facts on an entity. Keeps best version, archives redundant ones."""
         user_id = ctx.user_id
-        check_quota(ctx, "dedup")
+        use_quota(ctx, "dedup")  # atomic check+increment
         entity_id = store.get_entity_id(user_id, name, sub_user_id=sub_user_id)
         if not entity_id:
             raise HTTPException(status_code=404, detail=f"Entity '{name}' not found")
         extractor = get_llm()
         result = store.dedup_entity_facts(entity_id, name, extractor.llm)
-        store.increment_usage(user_id, "dedup")
         return result
 
     @app.post("/v1/dedup_all", tags=["Memory"])
     async def dedup_all_entities(sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Deduplicate facts across ALL entities for this user."""
         user_id = ctx.user_id
-        check_quota(ctx, "dedup")
+        use_quota(ctx, "dedup")  # atomic check+increment
         entities = store.get_all_entities(user_id, sub_user_id=sub_user_id)
         extractor = get_llm()
         total_archived = 0
@@ -1549,7 +1598,6 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             if r["archived"]:
                 total_archived += len(r["archived"])
                 results.append({"entity": e["name"], "archived": len(r["archived"])})
-        store.increment_usage(user_id, "dedup")
         return {"total_archived": total_archived, "entities": results}
 
     # ---- Reflection ----
@@ -1558,7 +1606,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     async def trigger_reflection(sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Manually trigger memory reflection. Generates AI insights from facts."""
         user_id = ctx.user_id
-        check_quota(ctx, "reflect")
+        use_quota(ctx, "reflect")  # atomic check+increment
         extractor = get_llm()
         stats = store.get_reflection_stats(user_id, sub_user_id=sub_user_id)
         result = store.generate_reflections(user_id, extractor.llm, sub_user_id=sub_user_id)
@@ -1566,8 +1614,6 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         entity_count = len(result.get("entity_reflections", []))
         cross_count = len(result.get("cross_entity", []))
         temporal_count = len(result.get("temporal", []))
-
-        store.increment_usage(user_id, "reflect")
         return {
             "status": "reflected",
             "generated": {
@@ -1606,24 +1652,20 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         ?auto_fix=true — auto-archive low quality and stale facts (curator only)
         """
         user_id = ctx.user_id
-        check_quota(ctx, "agent")
+        use_quota(ctx, "agent")  # atomic check+increment
         llm = get_llm()
 
         if agent == "all":
             result = store.run_all_agents(user_id, llm.llm, auto_fix=auto_fix, sub_user_id=sub_user_id)
-            store.increment_usage(user_id, "agent")
             return {"status": "completed", "agents": result}
         elif agent == "curator":
             result = store.run_curator_agent(user_id, llm.llm, auto_fix=auto_fix, sub_user_id=sub_user_id)
-            store.increment_usage(user_id, "agent")
             return {"status": "completed", "agent": "curator", "result": result}
         elif agent == "connector":
             result = store.run_connector_agent(user_id, llm.llm, sub_user_id=sub_user_id)
-            store.increment_usage(user_id, "agent")
             return {"status": "completed", "agent": "connector", "result": result}
         elif agent == "digest":
             result = store.run_digest_agent(user_id, llm.llm, sub_user_id=sub_user_id)
-            store.increment_usage(user_id, "agent")
             return {"status": "completed", "agent": "digest", "result": result}
         else:
             raise HTTPException(status_code=400, detail=f"Unknown agent: {agent}. Use: curator, connector, digest, all")
@@ -1663,6 +1705,29 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         url = req.get("url")
         if not url:
             raise HTTPException(status_code=400, detail="url is required")
+
+        # Validate webhook URL (prevent SSRF to internal networks)
+        import urllib.parse
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(status_code=400, detail="URL must use http or https")
+        hostname = parsed.hostname or ""
+        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("10.") or hostname.startswith("172.") or hostname.startswith("192.168.") or hostname.endswith(".internal"):
+            raise HTTPException(status_code=400, detail="Internal/private URLs are not allowed")
+
+        # Enforce webhook count limit per plan
+        plan_quotas = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
+        max_webhooks = plan_quotas.get("webhooks", 0)
+        if max_webhooks != -1:
+            existing = store.get_webhooks(user_id)
+            if len(existing) >= max_webhooks:
+                raise HTTPException(status_code=402, detail={
+                    "error": "quota_exceeded", "action": "webhooks",
+                    "limit": max_webhooks, "used": len(existing), "plan": ctx.plan,
+                    "message": f"Webhook limit reached ({max_webhooks}). Upgrade your plan.",
+                    "upgrade_url": "https://mengram.io/#pricing",
+                })
+
         try:
             hook = store.create_webhook(
                 user_id=user_id,
@@ -1716,6 +1781,21 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         name = req.get("name")
         if not name:
             raise HTTPException(status_code=400, detail="name is required")
+
+        # Enforce team count limit per plan
+        plan_quotas = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
+        max_teams = plan_quotas.get("teams", 0)
+        if max_teams != -1:
+            existing = store.get_user_teams(user_id)
+            owned = [t for t in existing if t.get("role") == "owner"]
+            if len(owned) >= max_teams:
+                raise HTTPException(status_code=402, detail={
+                    "error": "quota_exceeded", "action": "teams",
+                    "limit": max_teams, "used": len(owned), "plan": ctx.plan,
+                    "message": f"Team limit reached ({max_teams}). Upgrade your plan.",
+                    "upgrade_url": "https://mengram.io/#pricing",
+                })
+
         team = store.create_team(user_id, name, req.get("description", ""))
         return {"status": "created", "team": team}
 
@@ -1881,16 +1961,21 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         """Cognitive Profile — generates a ready-to-use system prompt from user memory.
 
         Returns a personalization prompt that can be inserted into any LLM.
-        Cached for 1 hour. Use force=true to regenerate."""
+        Cached for 1 hour. Use force=true to regenerate (Pro+ only)."""
         user_id = ctx.user_id
         if target_user_id != user_id:
             raise HTTPException(status_code=403, detail="Cannot access another user's profile")
+        # force=true bypasses cache → LLM call, restrict to paid plans
+        if force and ctx.plan == "free":
+            force = False
         return store.get_profile(target_user_id, force=force, sub_user_id=sub_user_id)
 
     @app.get("/v1/profile", tags=["Memory"])
     async def get_own_profile(force: bool = False, sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Cognitive Profile for the authenticated user."""
         user_id = ctx.user_id
+        if force and ctx.plan == "free":
+            force = False
         return store.get_profile(user_id, force=force, sub_user_id=sub_user_id)
 
     # ---- Episodic Memory ----
@@ -1916,6 +2001,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     ):
         """Semantic search over episodic memories."""
         user_id = ctx.user_id
+        use_quota(ctx, "search")  # counts as a search operation (embedding call)
         embedder = get_embedder()
         if embedder:
             emb = embedder.embed(query)
@@ -1946,6 +2032,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     ):
         """Semantic search over procedural memories."""
         user_id = ctx.user_id
+        use_quota(ctx, "search")  # counts as a search operation (embedding call)
         embedder = get_embedder()
         if embedder:
             emb = embedder.embed(query)
@@ -1967,6 +2054,9 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         creates a linked failure episode and evolves the procedure to a new version.
         """
         user_id = ctx.user_id
+        # Evolution on failure uses LLM + embedder — count as an add operation
+        if not success and body and body.context:
+            use_quota(ctx, "add")
         result = store.procedure_feedback(user_id, procedure_id, success, sub_user_id=sub_user_id)
         if "error" in result:
             raise HTTPException(status_code=404, detail=result["error"])
@@ -2036,7 +2126,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         """Search across all memory types: semantic, episodic, and procedural.
         Returns categorized results from each memory system."""
         user_id = ctx.user_id
-        check_quota(ctx, "search")
+        use_quota(ctx, "search")  # atomic check+increment
         import hashlib as _hashlib
 
         sub_uid = req.user_id or "default"
@@ -2045,7 +2135,6 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         cached = store.cache.get(cache_key)
         if cached:
             store.log_usage(user_id, "search_all")
-            store.increment_usage(user_id, "search")
             return cached
 
         embedder = get_embedder()
@@ -2111,7 +2200,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         # Cache in Redis (TTL 30s)
         store.cache.set(cache_key, result, ttl=30)
         store.log_usage(user_id, "search_all")
-        store.increment_usage(user_id, "search")
+        # increment already done in use_quota above
         return result
 
     # ============================================
@@ -2151,7 +2240,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     async def process_triggers(ctx: AuthContext = Depends(auth)):
         """Process pending triggers for the authenticated user only."""
         user_id = ctx.user_id
-        result = store.process_user_triggers(user_id) if hasattr(store, 'process_user_triggers') else store.process_all_triggers()
+        result = store.process_user_triggers(user_id)
         return result
 
     @app.delete("/v1/triggers/{trigger_id}", tags=["Smart Triggers"])
