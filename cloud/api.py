@@ -16,6 +16,7 @@ import json
 import logging
 import secrets
 import datetime
+import calendar
 from pathlib import Path
 
 # Configure logging
@@ -402,27 +403,20 @@ Be strict — only include entities that directly answer or relate to the query.
 
     # ---- Quota checking ----
 
-    def check_quota(ctx: AuthContext, action: str):
-        """Check if user has quota remaining. Raises HTTP 402 if exceeded.
-        Note: prefer use_quota() which atomically checks AND increments."""
-        quota_map = {
-            "add": "adds", "search": "searches", "agent": "agents",
-            "reflect": "reflects", "dedup": "dedups", "reindex": "reindexes",
-        }
-        quota_key = quota_map.get(action)
-        if not quota_key:
-            return
-        plan_quotas = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
-        max_allowed = plan_quotas.get(quota_key, 0)
-        if max_allowed == -1:
-            return  # unlimited
-        current = store.get_usage_count(ctx.user_id, action)
-        if current >= max_allowed:
-            _raise_quota_error(action, max_allowed, current, ctx.plan, ctx.user_id)
+    def _quota_cache_key(user_id: str, action: str) -> str:
+        """Redis key for quota counter: qc:{user_id}:{action}:{YYYY-MM}"""
+        today = datetime.date.today()
+        return f"qc:{user_id}:{action}:{today.year}-{today.month:02d}"
+
+    def _quota_month_end_ttl() -> int:
+        """Seconds until end of current month (for EXPIREAT)."""
+        today = datetime.date.today()
+        days_in_month = calendar.monthrange(today.year, today.month)[1]
+        return (days_in_month - today.day + 1) * 86400
 
     def use_quota(ctx: AuthContext, action: str, count: int = 1):
         """Atomically check quota AND increment usage in one operation.
-        Prevents race conditions where concurrent requests bypass limits."""
+        Uses Redis counter cache for fast-reject before hitting PostgreSQL."""
         quota_map = {
             "add": "adds", "search": "searches", "agent": "agents",
             "reflect": "reflects", "dedup": "dedups", "reindex": "reindexes",
@@ -434,34 +428,46 @@ Be strict — only include entities that directly answer or relate to the query.
         max_allowed = plan_quotas.get(quota_key, 0)
         if max_allowed == -1:
             return  # unlimited
-        # Fast reject: if already blocked in Redis, skip DB entirely
-        block_key = f"qb:{ctx.user_id}:{action}:{ctx.plan}"
+
+        # Step 1: Fast-reject via Redis counter cache (0 DB hits)
         redis_client = getattr(store.cache, '_redis', None)
-        if redis_client and redis_client.get(block_key):
-            logger.info(f"🚫 BLOCKED {action} | user={ctx.user_id[:8]} | plan={ctx.plan} (cached)")
-            _raise_quota_error(action, max_allowed, max_allowed, ctx.plan, ctx.user_id)
+        cache_key = _quota_cache_key(ctx.user_id, action)
+        try:
+            if redis_client:
+                cached = redis_client.get(cache_key)
+                if cached is not None and int(cached) >= max_allowed:
+                    logger.info(f"🚫 BLOCKED {action} | user={ctx.user_id[:8]} | plan={ctx.plan} | {cached}/{max_allowed} (cached)")
+                    _raise_quota_error(action, max_allowed, int(cached), ctx.plan, ctx.user_id)
+        except Exception:
+            pass  # Redis down → fall through to DB
+
+        # Step 2: Atomic check-and-increment in PostgreSQL
         try:
             store.check_and_increment(ctx.user_id, action, max_allowed, count)
         except ValueError as e:
             parts = str(e).split(":")
             if parts[0] == "quota_exceeded":
-                current = int(parts[2]) if len(parts) > 2 else 0
+                current = int(parts[2]) if len(parts) > 2 else max_allowed
                 limit = int(parts[3]) if len(parts) > 3 else max_allowed
+                # Update Redis counter to actual DB value (self-correction)
+                try:
+                    if redis_client:
+                        redis_client.set(cache_key, str(current), ex=_quota_month_end_ttl())
+                except Exception:
+                    pass
                 _raise_quota_error(action, limit, current, ctx.plan, ctx.user_id)
             raise
 
+        # Step 3: Success — update Redis counter from DB value
+        try:
+            if redis_client:
+                new_count = store.get_usage_count(ctx.user_id, action)
+                redis_client.set(cache_key, str(new_count), ex=_quota_month_end_ttl())
+        except Exception:
+            pass  # Redis down → counter will be set on next request
+
     def _raise_quota_error(action, max_allowed, current, plan, user_id=None):
         if user_id:
-            # Cache block in Redis — TTL = seconds until end of month
-            try:
-                redis_client = getattr(store.cache, '_redis', None)
-                if redis_client:
-                    import calendar
-                    today = datetime.date.today()
-                    days_left = calendar.monthrange(today.year, today.month)[1] - today.day + 1
-                    redis_client.set(f"qb:{user_id}:{action}:{plan}", "1", ex=days_left * 86400)
-            except Exception:
-                pass
             logger.warning(f"🚫 QUOTA {action} | user={user_id[:8]} | {current}/{max_allowed} | plan={plan}")
         raise HTTPException(
             status_code=402,
