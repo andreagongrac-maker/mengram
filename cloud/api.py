@@ -706,11 +706,18 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 </body></html>""")
 
     @app.post("/oauth/send-code")
-    async def oauth_send_code(req: dict):
+    async def oauth_send_code(req: dict, request: Request):
         """Send email verification code for OAuth."""
         email = req.get("email", "").strip().lower()
         if not email:
             return {"ok": False, "error": "Email required"}
+
+        # Rate limit: 3 codes/min per email, 10/min per IP
+        if not _check_rate_limit(f"code:{email}", 3):
+            return {"ok": False, "error": "Too many attempts. Try again in 60 seconds."}
+        client_ip = request.client.host if request.client else "unknown"
+        if not _check_rate_limit(f"code_ip:{client_ip}", 10):
+            return {"ok": False, "error": "Too many attempts. Try again in 60 seconds."}
 
         # Check if user exists, if not create
         user_id = store.get_user_by_email(email)
@@ -743,12 +750,19 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         return {"ok": True}
 
     @app.post("/oauth/verify")
-    async def oauth_verify(req: dict):
+    async def oauth_verify(req: dict, request: Request):
         """Verify email code and create OAuth authorization code."""
         email = req.get("email", "").strip().lower()
         code = req.get("code", "").strip()
         redirect_uri = req.get("redirect_uri", "")
         state = req.get("state", "")
+
+        # Brute-force protection: 5 attempts/min per email, 20/min per IP
+        if not _check_rate_limit(f"verify:{email}", 5):
+            return {"error": "Too many attempts. Try again in 60 seconds."}
+        client_ip = request.client.host if request.client else "unknown"
+        if not _check_rate_limit(f"verify_ip:{client_ip}", 20):
+            return {"error": "Too many attempts. Try again in 60 seconds."}
 
         if not store.verify_email_code(email, code):
             return {"error": "Invalid or expired code"}
@@ -756,6 +770,16 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         user_id = store.get_user_by_email(email)
         if not user_id:
             return {"error": "User not found"}
+
+        # Validate redirect_uri — must be HTTPS or localhost
+        if redirect_uri:
+            from urllib.parse import urlparse
+            parsed = urlparse(redirect_uri)
+            if parsed.scheme not in ("https", "http"):
+                return {"error": "Invalid redirect_uri scheme"}
+            # Allow localhost for dev, require HTTPS for everything else
+            if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+                return {"error": "redirect_uri must use HTTPS"}
 
         # Create OAuth authorization code
         oauth_code = secrets.token_urlsafe(32)
