@@ -29,7 +29,7 @@ logger = logging.getLogger("mengram")
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse, RedirectResponse
 from dataclasses import dataclass
 from pydantic import BaseModel
 
@@ -802,6 +802,170 @@ Be strict — only include entities that directly answer or relate to the query.
             api_key=new_key,
             message="New API key generated. Old keys are now inactive."
         )
+
+    # ---- GitHub OAuth ----
+
+    GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
+    GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
+
+    @app.get("/auth/github", tags=["System"])
+    async def github_login(request: Request):
+        """Redirect to GitHub OAuth authorization page."""
+        if not GITHUB_CLIENT_ID:
+            raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
+        # Generate state token to prevent CSRF
+        state = secrets.token_urlsafe(32)
+        store.cache.set(f"github_state:{state}", "1", ttl=600)
+        github_url = (
+            f"https://github.com/login/oauth/authorize"
+            f"?client_id={GITHUB_CLIENT_ID}"
+            f"&redirect_uri=https://mengram.io/auth/github/callback"
+            f"&scope=user:email"
+            f"&state={state}"
+        )
+        return RedirectResponse(url=github_url)
+
+    @app.get("/auth/github/callback", response_class=HTMLResponse, tags=["System"])
+    async def github_callback(code: str = "", state: str = "", error: str = ""):
+        """Handle GitHub OAuth callback — create/login user and show API key."""
+        import html as _html
+        if error:
+            return _github_error_page(f"GitHub authorization denied: {_html.escape(error)}")
+        if not code or not state:
+            return _github_error_page("Missing code or state parameter.")
+        if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+            return _github_error_page("GitHub OAuth not configured on server.")
+
+        # Verify CSRF state
+        if not store.cache.get(f"github_state:{state}"):
+            return _github_error_page("Invalid or expired state. Please try again.")
+        # Invalidate state by overwriting with short TTL
+        store.cache.set(f"github_state:{state}", "", ttl=1)
+
+        # Exchange code for access token
+        import urllib.request
+        import urllib.parse
+        try:
+            token_data = urllib.parse.urlencode({
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": GITHUB_CLIENT_SECRET,
+                "code": code,
+            }).encode()
+            token_req = urllib.request.Request(
+                "https://github.com/login/oauth/access_token",
+                data=token_data,
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(token_req, timeout=10) as resp:
+                token_resp = json.loads(resp.read())
+            access_token = token_resp.get("access_token")
+            if not access_token:
+                return _github_error_page("Failed to get access token from GitHub.")
+        except Exception as e:
+            logger.error(f"GitHub token exchange failed: {e}")
+            return _github_error_page("Failed to communicate with GitHub.")
+
+        # Fetch user email from GitHub API
+        try:
+            email_req = urllib.request.Request(
+                "https://api.github.com/user/emails",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "Mengram",
+                },
+            )
+            with urllib.request.urlopen(email_req, timeout=10) as resp:
+                emails = json.loads(resp.read())
+            # Pick primary verified email
+            email = None
+            for e in emails:
+                if e.get("primary") and e.get("verified"):
+                    email = e["email"].strip().lower()
+                    break
+            if not email:
+                # Fallback: any verified email
+                for e in emails:
+                    if e.get("verified"):
+                        email = e["email"].strip().lower()
+                        break
+            if not email:
+                return _github_error_page("No verified email found on your GitHub account.")
+        except Exception as e:
+            logger.error(f"GitHub email fetch failed: {e}")
+            return _github_error_page("Failed to fetch email from GitHub.")
+
+        # Create or login user
+        existing_user_id = store.get_user_by_email(email)
+        if existing_user_id:
+            # Existing user — generate new key
+            api_key = store.create_api_key(existing_user_id, name="github-oauth")
+            is_new = False
+        else:
+            # New user — create account
+            user_id = store.create_user(email)
+            api_key = store.create_api_key(user_id, name="github-oauth")
+            is_new = True
+
+        _send_api_key_email(email, api_key, is_reset=not is_new)
+        logger.info(f"🐙 GitHub OAuth {'signup' if is_new else 'login'}: {email}")
+
+        return _github_success_page(api_key, email, is_new)
+
+    def _github_success_page(api_key: str, email: str, is_new: bool) -> str:
+        import html as _html
+        email = _html.escape(email)
+        action = "Account created" if is_new else "Signed in"
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mengram — {action}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh}}
+.card{{background:#141414;border:1px solid #2a2a2a;border-radius:16px;padding:40px;max-width:480px;width:100%;text-align:center}}
+h1{{font-size:22px;margin-bottom:8px;color:#e8e8f0}}
+.sub{{color:#888;font-size:14px;margin-bottom:24px}}
+.key-box{{background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:20px 0;text-align:center}}
+.key-label{{color:#8888a8;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}}
+.key-val{{font-family:'JetBrains Mono',monospace;font-size:14px;color:#a78bfa;word-break:break-all}}
+.warn{{color:#ef4444;font-size:13px;font-weight:600;margin:12px 0}}
+.copy-btn{{padding:10px 20px;background:#a855f7;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;margin:8px 4px;width:100%}}
+.copy-btn:hover{{background:#9333ea}}
+.dash-btn{{padding:10px 20px;background:#1a1a2e;color:#a78bfa;border:1px solid #2a2a3e;border-radius:8px;cursor:pointer;font-size:14px;margin:8px 4px;width:100%;text-decoration:none;display:inline-block}}
+.dash-btn:hover{{background:#22223a}}
+</style></head><body>
+<div class="card">
+<h1>&#10003; {action}!</h1>
+<p class="sub">{email}</p>
+<div class="key-box">
+<p class="key-label">Your API Key</p>
+<p class="key-val" id="api-key">{api_key}</p>
+</div>
+<p class="warn">Save this key — it won't be shown again.</p>
+<button class="copy-btn" onclick="navigator.clipboard.writeText('{api_key}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy Key',2000)">Copy Key</button>
+<a class="dash-btn" href="/dashboard">Open Dashboard →</a>
+<p style="color:#555;font-size:12px;margin-top:16px">Key also sent to {email}</p>
+</div>
+<script>localStorage.setItem('mengram_key','{api_key}')</script>
+</body></html>"""
+
+    def _github_error_page(message: str) -> str:
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mengram — Error</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh}}
+.card{{background:#141414;border:1px solid #2a2a2a;border-radius:16px;padding:40px;max-width:420px;width:100%;text-align:center}}
+h1{{font-size:20px;color:#ef4444;margin-bottom:12px}}
+p{{color:#888;font-size:14px;margin-bottom:20px}}
+a{{color:#a855f7;text-decoration:none}}
+</style></head><body>
+<div class="card">
+<h1>Something went wrong</h1>
+<p>{message}</p>
+<a href="/">← Back to Mengram</a>
+</div></body></html>"""
 
     # ---- API Key Management ----
 
