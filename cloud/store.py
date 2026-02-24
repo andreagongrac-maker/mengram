@@ -813,6 +813,46 @@ class CloudStore:
             """)
         logger.info("✅ Migration complete (v2.15: subscriptions + usage counters)")
 
+        # --- v2.16 Performance indexes ---
+        with self._cursor() as cur:
+            # Base FK indexes (schema.sql has them, but migration path didn't)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_entity ON knowledge(entity_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_entity ON embeddings(entity_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_chunk_emb_chunk ON chunk_embeddings(chunk_id)")
+
+            # Composite partial index for the hottest query pattern (search, feed, reflect, agents)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_facts_entity_active
+                ON facts(entity_id, importance DESC, created_at DESC)
+                WHERE archived = FALSE
+            """)
+            # Time-window queries on facts (feed, digest, reflection stats)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_facts_created
+                ON facts(created_at DESC) WHERE archived = FALSE
+            """)
+            # Entities ORDER BY updated_at DESC (get_all_entities, entity_overview)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_entities_updated
+                ON entities(user_id, sub_user_id, updated_at DESC)
+            """)
+            # Procedures filtered by sub_user + current
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_procedures_current_sub
+                ON procedures(user_id, sub_user_id, updated_at DESC)
+                WHERE is_current = TRUE
+            """)
+            # Episodes linked to procedures
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_episodes_linked_proc
+                ON episodes(linked_procedure_id)
+                WHERE linked_procedure_id IS NOT NULL
+            """)
+        logger.info("✅ Migration complete (v2.16: performance indexes)")
+
         with self._cursor() as cur:
             cur.execute("SELECT pg_advisory_unlock(42)")
 

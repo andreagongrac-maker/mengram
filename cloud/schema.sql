@@ -51,6 +51,7 @@ CREATE INDEX idx_entities_sub_user ON entities(user_id, sub_user_id);
 CREATE INDEX idx_entities_type ON entities(user_id, type);
 CREATE INDEX idx_entities_name ON entities(user_id, name);
 CREATE INDEX idx_entities_metadata ON entities USING gin(metadata);
+CREATE INDEX idx_entities_updated ON entities(user_id, sub_user_id, updated_at DESC);
 
 -- ============================================
 -- 3. Facts (replaces ## Facts section in .md)
@@ -75,6 +76,8 @@ CREATE TABLE facts (
 CREATE INDEX idx_facts_entity ON facts(entity_id);
 CREATE INDEX idx_facts_event_date ON facts(event_date) WHERE event_date IS NOT NULL;
 CREATE INDEX idx_facts_expires ON facts(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_facts_entity_active ON facts(entity_id, importance DESC, created_at DESC) WHERE archived = FALSE;
+CREATE INDEX idx_facts_created ON facts(created_at DESC) WHERE archived = FALSE;
 
 -- ============================================
 -- 4. Relations (replaces ## Relations section)
@@ -171,6 +174,7 @@ CREATE INDEX idx_episodes_user ON episodes(user_id, created_at DESC);
 CREATE INDEX idx_episodes_sub_user ON episodes(user_id, sub_user_id, created_at DESC);
 CREATE INDEX idx_episodes_participants ON episodes USING gin(participants);
 CREATE INDEX idx_episodes_expires ON episodes(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_episodes_linked_proc ON episodes(linked_procedure_id) WHERE linked_procedure_id IS NOT NULL;
 
 CREATE TABLE episode_embeddings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -239,6 +243,7 @@ ALTER TABLE episodes ADD CONSTRAINT fk_episodes_linked_procedure
 
 -- v2.7: filter only current versions
 CREATE INDEX idx_procedures_current ON procedures(user_id, is_current) WHERE is_current = TRUE;
+CREATE INDEX idx_procedures_current_sub ON procedures(user_id, sub_user_id, updated_at DESC) WHERE is_current = TRUE;
 
 -- ============================================
 -- 8b. Procedure Evolution Log (v2.7 — experience-driven procedures)
