@@ -165,7 +165,7 @@ profile = m.get_profile()             # instant system prompt
         allow_headers=["*"],
     )
 
-    store = CloudStore(DATABASE_URL, redis_url=REDIS_URL)
+    store = CloudStore(DATABASE_URL, pool_min=2, pool_max=8, redis_url=REDIS_URL)
 
     # LLM client for extraction (shared)
     _llm_client = None
