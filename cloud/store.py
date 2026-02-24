@@ -35,7 +35,10 @@ logger = logging.getLogger("mengram")
 
 # ---- TTL Cache (Redis or in-memory) ----
 class TTLCache:
-    """Thread-safe cache with TTL. Uses Redis if available, falls back to in-memory."""
+    """Thread-safe cache with TTL. Uses Redis if available, falls back to in-memory.
+    In-memory fallback has max-size eviction to prevent unbounded growth."""
+    MAX_MEMORY_KEYS = 10_000  # Evict oldest entries when exceeded
+
     def __init__(self, default_ttl: int = 60, redis_url: str = None):
         self._store = {}
         self._lock = threading.Lock()
@@ -76,6 +79,18 @@ class TTLCache:
             except Exception:
                 pass
         with self._lock:
+            # Evict expired + oldest if over limit
+            if len(self._store) >= self.MAX_MEMORY_KEYS:
+                now = time.time()
+                # First pass: remove expired
+                expired = [k for k, v in self._store.items() if v["expires"] <= now]
+                for k in expired:
+                    del self._store[k]
+                # Second pass: evict oldest 20% if still over limit
+                if len(self._store) >= self.MAX_MEMORY_KEYS:
+                    sorted_keys = sorted(self._store, key=lambda k: self._store[k]["expires"])
+                    for k in sorted_keys[:len(sorted_keys) // 5]:
+                        del self._store[k]
             self._store[key] = {
                 "value": value,
                 "expires": time.time() + ttl
@@ -84,12 +99,15 @@ class TTLCache:
     def invalidate(self, prefix: str = ""):
         if self._redis:
             try:
-                if not prefix:
-                    keys = self._redis.keys("mc:*")
-                else:
-                    keys = self._redis.keys(f"mc:{prefix}*")
-                if keys:
-                    self._redis.delete(*keys)
+                # Use SCAN instead of KEYS to avoid blocking Redis
+                pattern = "mc:*" if not prefix else f"mc:{prefix}*"
+                cursor = 0
+                while True:
+                    cursor, keys = self._redis.scan(cursor, match=pattern, count=200)
+                    if keys:
+                        self._redis.delete(*keys)
+                    if cursor == 0:
+                        break
                 return
             except Exception:
                 pass
@@ -857,9 +875,18 @@ class CloudStore:
             }
 
     def _cleanup_jobs(self):
-        """Remove jobs older than 1 hour."""
+        """Mark stuck jobs as failed (>5 min processing) and remove old completed jobs (>1h)."""
         try:
             with self._cursor() as cur:
+                # Mark stuck processing jobs as failed
+                cur.execute("""
+                    UPDATE jobs SET status = 'failed', error = 'Timed out (server restart or processing exceeded 5 min)'
+                    WHERE status = 'processing' AND created_at < NOW() - INTERVAL '5 minutes'
+                """)
+                stuck = cur.rowcount
+                if stuck > 0:
+                    logger.info(f"♻️ Recovered {stuck} stuck jobs (marked as failed)")
+                # Remove old completed/failed jobs
                 cur.execute(
                     "DELETE FROM jobs WHERE created_at < NOW() - INTERVAL '1 hour'"
                 )
@@ -1675,6 +1702,10 @@ class CloudStore:
                         "via_relation": row["rel_type"],
                     }
                     next_seeds.append(rid)
+
+                # Hard cap: don't expand beyond 50 graph entities total
+                if len(graph_entities) >= 50:
+                    break
 
             current_seeds = next_seeds[:15]
 
@@ -4175,13 +4206,24 @@ Be specific and personal, not generic. No markdown, just JSON."""
         }).encode("utf-8")
 
         def _send(hook_id, url, secret):
-            # Validate URL before sending (prevent SSRF)
+            # Validate URL before sending (prevent SSRF via DNS rebinding)
             import urllib.parse
+            import socket
+            import ipaddress as _ipa
             parsed = urllib.parse.urlparse(url)
             hostname = parsed.hostname or ""
-            if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("10.") or hostname.startswith("172.") or hostname.startswith("192.168.") or hostname.endswith(".internal"):
-                logger.warning(f"⚠️ Webhook {hook_id} blocked: internal URL {hostname}")
+            if hostname in ("localhost", "0.0.0.0", "metadata.google.internal") or hostname.endswith(".internal") or hostname.endswith(".local"):
+                logger.warning(f"⚠️ Webhook {hook_id} blocked: internal hostname {hostname}")
                 return
+            try:
+                resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                for family, _, _, _, sockaddr in resolved:
+                    ip = _ipa.ip_address(sockaddr[0])
+                    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                        logger.warning(f"⚠️ Webhook {hook_id} blocked: {hostname} → private IP {ip}")
+                        return
+            except (socket.gaierror, ValueError):
+                pass
             try:
                 req = urllib.request.Request(
                     url, data=data,

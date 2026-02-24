@@ -222,7 +222,7 @@ class CloudMemory:
             params = {}
             if user_id and user_id != "default":
                 params["sub_user_id"] = user_id
-            return self._request("GET", f"/v1/memory/{name}", params=params)
+            return self._request("GET", f"/v1/memory/{urllib.parse.quote(name, safe='')}", params=params)
         except Exception:
             return None
 
@@ -232,7 +232,7 @@ class CloudMemory:
             params = {}
             if user_id and user_id != "default":
                 params["sub_user_id"] = user_id
-            self._request("DELETE", f"/v1/memory/{name}", params=params)
+            self._request("DELETE", f"/v1/memory/{urllib.parse.quote(name, safe='')}", params=params)
             return True
         except Exception:
             return False
@@ -292,7 +292,7 @@ class CloudMemory:
         params = {}
         if user_id and user_id != "default":
             params["sub_user_id"] = user_id
-        return self._request("POST", f"/v1/entity/{name}/dedup", params=params)
+        return self._request("POST", f"/v1/entity/{urllib.parse.quote(name, safe='')}/dedup", params=params)
 
     def merge(self, source: str, target: str, user_id: str = "default") -> dict:
         """Merge two entities."""
@@ -324,7 +324,7 @@ class CloudMemory:
         if user_id and user_id != "default":
             params["sub_user_id"] = user_id
         params["new_type"] = new_type
-        return self._request("PATCH", f"/v1/entity/{name}/type", params=params)
+        return self._request("PATCH", f"/v1/entity/{urllib.parse.quote(name, safe='')}/type", params=params)
 
     def feed(self, limit: int = 50, user_id: str = "default") -> list:
         """Get activity feed."""

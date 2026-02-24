@@ -94,8 +94,43 @@ class FeedbackRequest(BaseModel):
     context: str | None = None         # What went wrong (triggers evolution on failure)
     failed_at_step: int | None = None  # Which step failed
 
+import re
+import ipaddress
+_EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+
+def _is_private_url(url: str) -> bool:
+    """Check if URL points to private/internal network (SSRF protection)."""
+    import urllib.parse
+    import socket
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return True
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return True
+    # Block well-known internal hostnames
+    if hostname in ("localhost", "0.0.0.0", "metadata.google.internal") or hostname.endswith(".internal") or hostname.endswith(".local"):
+        return True
+    # Try to resolve hostname and check IP
+    try:
+        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for family, _, _, _, sockaddr in resolved:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return True
+    except (socket.gaierror, ValueError):
+        pass  # Can't resolve — allow (will fail at send time)
+    return False
+
 class SignupRequest(BaseModel):
     email: str
+
+    @property
+    def validated_email(self) -> str:
+        e = self.email.strip().lower()
+        if not e or len(e) > 254 or not _EMAIL_RE.match(e):
+            raise ValueError("Invalid email address")
+        return e
 
 class SignupResponse(BaseModel):
     api_key: str
@@ -103,6 +138,13 @@ class SignupResponse(BaseModel):
 
 class ResetKeyRequest(BaseModel):
     email: str
+
+    @property
+    def validated_email(self) -> str:
+        e = self.email.strip().lower()
+        if not e or len(e) > 254 or not _EMAIL_RE.match(e):
+            raise ValueError("Invalid email address")
+        return e
 
 
 # ---- App ----
@@ -167,6 +209,9 @@ profile = m.get_profile()             # instant system prompt
 
     store = CloudStore(DATABASE_URL, pool_min=2, pool_max=8, redis_url=REDIS_URL)
 
+    # Recover stuck jobs from previous deploys/crashes
+    store._cleanup_jobs()
+
     # LLM client for extraction (shared)
     _llm_client = None
     _extractor = None
@@ -201,6 +246,8 @@ profile = m.get_profile()             # instant system prompt
         return _embedder
 
     # ---- Re-ranking (Cohere Rerank → gpt-4o-mini fallback) ----
+    _cohere_client = None
+    _openai_rerank_client = None
 
     def rerank_results(query: str, results: list[dict], plan: str = "business") -> list[dict]:
         """Re-rank search results based on subscription plan.
@@ -217,8 +264,11 @@ profile = m.get_profile()             # instant system prompt
         cohere_key = os.environ.get("COHERE_API_KEY", "") if plan == "business" else ""
         if cohere_key:
             try:
-                import cohere
-                co = cohere.ClientV2(api_key=cohere_key)
+                nonlocal _cohere_client
+                if _cohere_client is None:
+                    import cohere
+                    _cohere_client = cohere.ClientV2(api_key=cohere_key)
+                co = _cohere_client
 
                 # Build one document per fact (not per entity)
                 fact_docs = []  # [(entity_idx, fact_idx, doc_text)]
@@ -266,8 +316,11 @@ profile = m.get_profile()             # instant system prompt
             return results
 
         try:
-            import openai
-            client = openai.OpenAI(api_key=openai_key)
+            nonlocal _openai_rerank_client
+            if _openai_rerank_client is None:
+                import openai
+                _openai_rerank_client = openai.OpenAI(api_key=openai_key)
+            client = _openai_rerank_client
 
             candidates = []
             for i, r in enumerate(results):
@@ -544,19 +597,25 @@ Be strict — only include entities that directly answer or relate to the query.
     @app.post("/v1/signup", tags=["System"], response_model=SignupResponse)
     async def signup(req: SignupRequest, request: Request):
         """Create account and get API key."""
+        # Validate email format
+        try:
+            email = req.validated_email
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+
         # Rate limit signups: 5/min per IP
         client_ip = request.client.host if request.client else "unknown"
         if not _check_rate_limit(f"signup:{client_ip}", 5):
             raise HTTPException(status_code=429, detail="Too many signup attempts. Try again in 60 seconds.")
-        existing = store.get_user_by_email(req.email)
+        existing = store.get_user_by_email(email)
         if existing:
             raise HTTPException(status_code=409, detail="Email already registered")
 
-        user_id = store.create_user(req.email)
+        user_id = store.create_user(email)
         api_key = store.create_api_key(user_id)
 
         # Send key via email
-        _send_api_key_email(req.email, api_key, is_reset=False)
+        _send_api_key_email(email, api_key, is_reset=False)
 
         return SignupResponse(
             api_key=api_key,
@@ -566,17 +625,22 @@ Be strict — only include entities that directly answer or relate to the query.
     @app.post("/v1/reset-key", tags=["System"])
     async def reset_key(req: ResetKeyRequest, request: Request):
         """Reset API key and send new one to email."""
+        try:
+            email = req.validated_email
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+
         # Rate limit reset: 3/min per IP
         client_ip = request.client.host if request.client else "unknown"
         if not _check_rate_limit(f"reset:{client_ip}", 3):
             raise HTTPException(status_code=429, detail="Too many reset attempts. Try again in 60 seconds.")
-        user_id = store.get_user_by_email(req.email)
+        user_id = store.get_user_by_email(email)
         if not user_id:
             # Don't reveal whether email exists
             return {"message": "If this email is registered, a new API key has been sent."}
 
         new_key = store.reset_api_key(user_id)
-        _send_api_key_email(req.email, new_key, is_reset=True)
+        _send_api_key_email(email, new_key, is_reset=True)
 
         return {"message": "If this email is registered, a new API key has been sent."}
 
@@ -833,6 +897,11 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         if not result:
             raise HTTPException(status_code=400, detail="Invalid or expired code")
 
+        # Verify redirect_uri matches the one used during authorization
+        stored_redirect = result.get("redirect_uri", "")
+        if redirect_uri and stored_redirect and redirect_uri != stored_redirect:
+            raise HTTPException(status_code=400, detail="redirect_uri mismatch")
+
         # Get or create API key for this user
         user_id = result["user_id"]
         api_key = store.create_api_key(user_id, name="chatgpt-oauth")
@@ -844,32 +913,27 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         }
 
     @app.get("/v1/health", tags=["System"])
-    async def health():
-        cache_stats = store.cache.stats()
-        pool_info = {"type": "pool", "max": store._pool.maxconn} if store._pool else {"type": "single"}
-        # Basic DB diagnostics
-        db_info = {}
-        try:
-            with store._cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM entities")
-                db_info["entities"] = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM facts")
-                db_info["facts"] = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM facts WHERE event_date IS NOT NULL")
-                db_info["facts_with_date"] = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM conversation_chunks")
-                db_info["chunks"] = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM chunk_embeddings")
-                db_info["chunk_embeddings"] = cur.fetchone()[0]
-        except Exception as e:
-            db_info["error"] = str(e)
-        return {
-            "status": "ok",
-            "version": "2.14.5",
-            "cache": cache_stats,
-            "connection": pool_info,
-            "db": db_info,
-        }
+    async def health(authorization: str = Header(None)):
+        """Health check. Returns basic status for unauthenticated, detailed diagnostics for authenticated."""
+        result = {"status": "ok", "version": "2.14.5"}
+
+        # Only expose detailed diagnostics to authenticated users
+        if authorization:
+            key = authorization.replace("Bearer ", "")
+            user_id = store.verify_api_key(key)
+            if user_id:
+                result["cache"] = store.cache.stats()
+                result["connection"] = {"type": "pool", "max": store._pool.maxconn} if store._pool else {"type": "single"}
+                try:
+                    with store._cursor() as cur:
+                        cur.execute("SELECT COUNT(*) FROM entities WHERE user_id = %s", (user_id,))
+                        result["db"] = {"entities": cur.fetchone()[0]}
+                        cur.execute("SELECT COUNT(*) FROM facts WHERE entity_id IN (SELECT id FROM entities WHERE user_id = %s)", (user_id,))
+                        result["db"]["facts"] = cur.fetchone()[0]
+                except Exception as e:
+                    result["db"] = {"error": str(e)}
+
+        return result
 
     # ---- Protected endpoints ----
 
@@ -1423,12 +1487,16 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
     @app.get("/v1/memories", tags=["Memory"])
     async def get_all(sub_user_id: str = Query("default"),
+                      limit: int = Query(100, ge=1, le=500),
+                      offset: int = Query(0, ge=0),
                       ctx: AuthContext = Depends(auth)):
-        """Get all memories (entities)."""
+        """Get all memories (entities). Supports pagination with limit/offset."""
         user_id = ctx.user_id
         entities = store.get_all_entities(user_id, sub_user_id=sub_user_id)
+        total = len(entities)
+        entities = entities[offset:offset + limit]
         store.log_usage(user_id, "get_all")
-        return {"memories": entities}
+        return {"memories": entities, "total": total, "limit": limit, "offset": offset}
 
     @app.post("/v1/reindex", tags=["Memory"])
     async def reindex(sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
@@ -1707,12 +1775,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             raise HTTPException(status_code=400, detail="url is required")
 
         # Validate webhook URL (prevent SSRF to internal networks)
-        import urllib.parse
-        parsed = urllib.parse.urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            raise HTTPException(status_code=400, detail="URL must use http or https")
-        hostname = parsed.hostname or ""
-        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("10.") or hostname.startswith("172.") or hostname.startswith("192.168.") or hostname.endswith(".internal"):
+        if _is_private_url(url):
             raise HTTPException(status_code=400, detail="Internal/private URLs are not allowed")
 
         # Enforce webhook count limit per plan
@@ -1751,6 +1814,10 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     async def update_webhook(webhook_id: int, req: dict, ctx: AuthContext = Depends(auth)):
         """Update a webhook. Body: any of {url, name, event_types, active}"""
         user_id = ctx.user_id
+        # SSRF check on URL update
+        new_url = req.get("url")
+        if new_url and _is_private_url(new_url):
+            raise HTTPException(status_code=400, detail="Internal/private URLs are not allowed")
         result = store.update_webhook(
             user_id=user_id,
             webhook_id=webhook_id,
@@ -1907,12 +1974,17 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         return {"results": results}
 
     @app.get("/v1/memories/full", tags=["Memory"])
-    async def get_all_full(sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
-        """Get all memories with full facts, relations, knowledge. Single query."""
+    async def get_all_full(sub_user_id: str = Query("default"),
+                           limit: int = Query(100, ge=1, le=500),
+                           offset: int = Query(0, ge=0),
+                           ctx: AuthContext = Depends(auth)):
+        """Get all memories with full facts, relations, knowledge. Supports pagination."""
         user_id = ctx.user_id
         entities = store.get_all_entities_full(user_id, sub_user_id=sub_user_id)
+        total = len(entities)
+        entities = entities[offset:offset + limit]
         store.log_usage(user_id, "get_all")
-        return {"memories": entities}
+        return {"memories": entities, "total": total, "limit": limit, "offset": offset}
 
     @app.get("/v1/memory/{name}", tags=["Memory"])
     async def get_memory(name: str, sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
