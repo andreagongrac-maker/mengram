@@ -261,7 +261,7 @@ export declare class MengramClient {
   // Billing
   getBilling(): Promise<BillingInfo>;
   createCheckout(plan: 'pro' | 'business'): Promise<{ checkout_url: string; transaction_id: string }>;
-  createPortal(): Promise<{ url: string }>;
+  createPortal(): Promise<{ portal_url: string }>;
 
   // Import (v2.9)
   importChatgpt(zipPath: string, options?: { chunkSize?: number; onProgress?: (current: number, total: number, title: string) => void }): Promise<ImportResult>;

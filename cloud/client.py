@@ -758,7 +758,7 @@ class CloudMemory:
         """Create Paddle customer portal session for managing subscription.
 
         Returns:
-            {"url": "https://customer-portal.paddle.com/..."}
+            {"portal_url": "https://customer-portal.paddle.com/..."}
         """
         return self._request("POST", "/v1/billing/portal")
 

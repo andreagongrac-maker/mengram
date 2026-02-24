@@ -889,7 +889,7 @@ class MengramClient {
 
   /**
    * Create Paddle customer portal session for managing subscription.
-   * @returns {Promise<{url: string}>}
+   * @returns {Promise<{portal_url: string}>}
    */
   async createPortal() {
     return this._request('POST', '/v1/billing/portal');

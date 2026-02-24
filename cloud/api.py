@@ -2280,7 +2280,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             overview_url = urls.get("general", {}).get("overview", "")
             if not overview_url:
                 raise HTTPException(status_code=502, detail="Paddle did not return portal URL")
-            return {"url": overview_url}
+            return {"portal_url": overview_url}
         except Exception as e:
             logger.error(f"Paddle portal error: {e}")
             raise HTTPException(status_code=502, detail=f"Paddle error: {e}")
@@ -2369,7 +2369,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                 logger.warning(f"Payment past due: user={user_id}")
 
         elif event_type == "subscription.updated":
-            # Handle plan changes (upgrade/downgrade)
+            # Handle plan changes (upgrade/downgrade) and status updates
             custom = data.get("custom_data", {})
             user_id = custom.get("mengram_user_id")
             customer_id = data.get("customer_id", "")
@@ -2377,12 +2377,21 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                 user_id = store.get_user_by_paddle_customer(customer_id)
             if user_id:
                 updates = {"status": data.get("status", "active")}
+                # Detect plan from items → price_id
+                items = data.get("items", [])
+                if items:
+                    price_id = items[0].get("price", {}).get("id", "")
+                    if price_id == PADDLE_PRICES.get("business"):
+                        updates["plan"] = "business"
+                    elif price_id == PADDLE_PRICES.get("pro"):
+                        updates["plan"] = "pro"
                 current_period = data.get("current_billing_period", {})
                 if current_period.get("starts_at"):
                     updates["current_period_start"] = current_period["starts_at"]
                 if current_period.get("ends_at"):
                     updates["current_period_end"] = current_period["ends_at"]
                 store.update_subscription(user_id, **updates)
+                logger.info(f"Subscription updated: user={user_id} updates={updates}")
 
         elif event_type == "transaction.completed":
             custom = data.get("custom_data", {})
