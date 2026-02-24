@@ -1495,12 +1495,16 @@ crew = Crew(agents=[agent], tasks=[...])</pre>
             <div class="signup-box">
                 <h2>Get your free API key</h2>
                 <p>No credit card. Start in 30 seconds.</p>
-                <div class="signup-form">
+                <div class="signup-form" id="step-email">
                     <input type="email" class="signup-input" id="email-input" placeholder="your@email.com">
-                    <button class="signup-btn" id="signup-btn" onclick="signup()">Get Key</button>
+                    <button class="signup-btn" id="signup-btn" onclick="sendCode()">Get Key</button>
+                </div>
+                <div class="signup-form" id="step-code" style="display:none">
+                    <input type="text" class="signup-input" id="code-input" placeholder="6-digit code" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+                    <button class="signup-btn" id="verify-btn" onclick="verifyCode()">Verify</button>
                 </div>
                 <div class="signup-result" id="signup-result"></div>
-                <p class="signup-note">🔒 Email only for account creation. No spam ever.</p>
+                <p class="signup-note" id="signup-note">🔒 We'll send a verification code to confirm your email.</p>
             </div>
         </section>
 
@@ -1617,7 +1621,9 @@ crew = Crew(agents=[agent], tasks=[...])</pre>
             setTimeout(() => btn.textContent = 'Copy', 2000);
         }
 
-        async function signup() {
+        let _signupEmail = '';
+
+        async function sendCode() {
             const email = document.getElementById("email-input").value.trim();
             const btn = document.getElementById("signup-btn");
             const result = document.getElementById("signup-result");
@@ -1629,7 +1635,7 @@ crew = Crew(agents=[agent], tasks=[...])</pre>
             }
 
             btn.disabled = true;
-            btn.textContent = "Creating...";
+            btn.textContent = "Sending...";
 
             try {
                 const resp = await fetch(`${API_URL}/v1/signup`, {
@@ -1640,6 +1646,51 @@ crew = Crew(agents=[agent], tasks=[...])</pre>
                 const data = await resp.json();
 
                 if (resp.ok) {
+                    _signupEmail = email;
+                    document.getElementById("step-email").style.display = "none";
+                    document.getElementById("step-code").style.display = "flex";
+                    document.getElementById("signup-note").innerHTML = `📧 Code sent to <strong>${email}</strong>. Check your inbox.`;
+                    result.className = "signup-result";
+                    result.innerHTML = "";
+                    document.getElementById("code-input").focus();
+                } else {
+                    result.className = "signup-result show error";
+                    result.innerHTML = data.detail || "Something went wrong. Try again.";
+                }
+            } catch (err) {
+                result.className = "signup-result show error";
+                result.innerHTML = "Network error. Try again in a few seconds.";
+            }
+
+            btn.disabled = false;
+            btn.textContent = "Get Key";
+        }
+
+        async function verifyCode() {
+            const code = document.getElementById("code-input").value.trim();
+            const btn = document.getElementById("verify-btn");
+            const result = document.getElementById("signup-result");
+
+            if (!code || code.length < 6) {
+                result.className = "signup-result show error";
+                result.innerHTML = "Enter the 6-digit code from your email.";
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = "Verifying...";
+
+            try {
+                const resp = await fetch(`${API_URL}/v1/verify`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email: _signupEmail, code }),
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    document.getElementById("step-code").style.display = "none";
+                    document.getElementById("signup-note").style.display = "none";
                     result.className = "signup-result show success";
                     result.innerHTML = `
                         <strong style="color: var(--green);">✅ Account created!</strong>
@@ -1657,7 +1708,7 @@ crew = Crew(agents=[agent], tasks=[...])</pre>
                     `;
                 } else {
                     result.className = "signup-result show error";
-                    result.innerHTML = data.detail || "Something went wrong. Try again.";
+                    result.innerHTML = data.detail || "Invalid code. Try again.";
                 }
             } catch (err) {
                 result.className = "signup-result show error";
@@ -1665,7 +1716,7 @@ crew = Crew(agents=[agent], tasks=[...])</pre>
             }
 
             btn.disabled = false;
-            btn.textContent = "Get Key";
+            btn.textContent = "Verify";
         }
 
         function copyKey() {
@@ -1677,7 +1728,10 @@ crew = Crew(agents=[agent], tasks=[...])</pre>
         }
 
         document.getElementById("email-input").addEventListener("keydown", e => {
-            if (e.key === "Enter") signup();
+            if (e.key === "Enter") sendCode();
+        });
+        document.getElementById("code-input").addEventListener("keydown", e => {
+            if (e.key === "Enter") verifyCode();
         });
     </script>
 </body>

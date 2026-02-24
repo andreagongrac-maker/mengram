@@ -138,6 +138,17 @@ class SignupResponse(BaseModel):
     api_key: str
     message: str
 
+class VerifyRequest(BaseModel):
+    email: str
+    code: str
+
+    @property
+    def validated_email(self) -> str:
+        e = self.email.strip().lower()
+        if not e or len(e) > 254 or not _EMAIL_RE.match(e):
+            raise ValueError("Invalid email address")
+        return e
+
 class ResetKeyRequest(BaseModel):
     email: str
 
@@ -593,6 +604,34 @@ Be strict — only include entities that directly answer or relate to the query.
         except Exception as e:
             logger.error(f"⚠️  Email send failed: {e}")
 
+    def _send_verification_email(email: str, code: str):
+        """Send 6-digit verification code via Resend."""
+        resend_key = os.environ.get("RESEND_API_KEY")
+        if not resend_key:
+            logger.warning("⚠️  RESEND_API_KEY not set, cannot send verification code")
+            return
+        try:
+            import resend
+            resend.api_key = resend_key
+            resend.Emails.send({
+                "from": EMAIL_FROM,
+                "to": [email],
+                "subject": f"Mengram verification code: {code}",
+                "html": f"""
+                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;">
+                    <h2 style="color:#a855f7;">Mengram</h2>
+                    <p>Your verification code:</p>
+                    <div style="background:#f5f5f7;padding:16px 24px;border-radius:8px;text-align:center;margin:16px 0;">
+                        <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#1a1a2e;">{code}</span>
+                    </div>
+                    <p style="color:#666;font-size:14px;">This code expires in 10 minutes.</p>
+                </div>
+                """,
+            })
+            logger.info(f"📧 Verification code sent to {email}")
+        except Exception as e:
+            logger.error(f"⚠️  Verification email failed: {e}")
+
     # ---- Public endpoints ----
 
     @app.get("/", response_class=HTMLResponse)
@@ -650,32 +689,63 @@ Be strict — only include entities that directly answer or relate to the query.
             media_type="application/zip"
         )
 
-    @app.post("/v1/signup", tags=["System"], response_model=SignupResponse)
+    @app.post("/v1/signup", tags=["System"])
     async def signup(req: SignupRequest, request: Request):
-        """Create account and get API key."""
-        # Validate email format
+        """Step 1: Send verification code to email."""
         try:
             email = req.validated_email
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid email address")
 
-        # Rate limit signups: 5/min per IP
+        # Rate limit: 5/min per IP, 3/min per email
         client_ip = request.client.host if request.client else "unknown"
         if not _check_rate_limit(f"signup:{client_ip}", 5):
             raise HTTPException(status_code=429, detail="Too many signup attempts. Try again in 60 seconds.")
+        if not _check_rate_limit(f"signup_email:{email}", 3):
+            raise HTTPException(status_code=429, detail="Too many attempts for this email.")
+
+        existing = store.get_user_by_email(email)
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already registered")
+
+        # Generate and send 6-digit OTP
+        code = f"{secrets.randbelow(900000) + 100000}"
+        store.save_email_code(email, code)
+        _send_verification_email(email, code)
+
+        return {"message": "Verification code sent to your email. Check your inbox."}
+
+    @app.post("/v1/verify", tags=["System"], response_model=SignupResponse)
+    async def verify_signup(req: VerifyRequest, request: Request):
+        """Step 2: Verify code, create account, return API key."""
+        try:
+            email = req.validated_email
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+        code = req.code.strip()
+
+        # Rate limit: 5/min per email, 20/min per IP
+        if not _check_rate_limit(f"verify_signup:{email}", 5):
+            raise HTTPException(status_code=429, detail="Too many attempts. Try again in 60 seconds.")
+        client_ip = request.client.host if request.client else "unknown"
+        if not _check_rate_limit(f"verify_signup_ip:{client_ip}", 20):
+            raise HTTPException(status_code=429, detail="Too many attempts.")
+
+        if not store.verify_email_code(email, code):
+            raise HTTPException(status_code=400, detail="Invalid or expired code. Request a new one.")
+
+        # Race condition guard
         existing = store.get_user_by_email(email)
         if existing:
             raise HTTPException(status_code=409, detail="Email already registered")
 
         user_id = store.create_user(email)
         api_key = store.create_api_key(user_id)
-
-        # Send key via email
         _send_api_key_email(email, api_key, is_reset=False)
 
         return SignupResponse(
             api_key=api_key,
-            message="API key sent to your email. Save it — it won't be shown again."
+            message="Account created! API key sent to your email. Save it — it won't be shown again."
         )
 
     @app.post("/v1/reset-key", tags=["System"])
