@@ -32,6 +32,24 @@
             --red: #f87171;
             --red-dim: rgba(248, 113, 113, 0.1);
         }
+        [data-theme="light"] {
+            --bg: #f5f5f7;
+            --bg-card: #ffffff;
+            --bg-elevated: #f0f0f3;
+            --bg-hover: #e8e8ec;
+            --border: #d8d8e0;
+            --border-hover: #c0c0c8;
+            --text: #1a1a2e;
+            --text-2: #5a5a78;
+            --text-3: #9898b0;
+            --accent-dim: rgba(168, 85, 247, 0.08);
+            --accent-glow: rgba(168, 85, 247, 0.15);
+            --green-dim: rgba(16, 185, 129, 0.08);
+            --blue-dim: rgba(59, 130, 246, 0.08);
+            --orange-dim: rgba(245, 158, 11, 0.08);
+            --pink-dim: rgba(236, 72, 153, 0.08);
+            --red-dim: rgba(239, 68, 68, 0.08);
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: var(--bg); color: var(--text); font-family: 'Sora', sans-serif; -webkit-font-smoothing: antialiased; min-height: 100vh; }
 
@@ -123,8 +141,22 @@
         /* Graph */
         .graph-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; height: calc(100vh - 200px); position: relative; overflow: hidden; }
         .graph-box svg { width: 100%; height: 100%; }
-        .graph-legend { position: absolute; bottom: 16px; left: 16px; display: flex; gap: 14px; font-size: 11px; color: var(--text-2); background: rgba(5,5,10,0.8); padding: 8px 14px; border-radius: 8px; backdrop-filter: blur(8px); }
+        .graph-legend { position: absolute; bottom: 16px; left: 16px; display: flex; gap: 14px; font-size: 11px; color: var(--text-2); background: var(--bg-card); padding: 8px 14px; border-radius: 8px; backdrop-filter: blur(8px); border: 1px solid var(--border); }
         .ldot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+        .graph-panel { position: absolute; right: 16px; top: 16px; width: 320px; max-height: calc(100% - 32px); overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; z-index: 10; }
+        .gp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .gp-header span { font-weight: 600; font-size: 15px; }
+        .gp-close { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 16px; padding: 4px 8px; border-radius: 6px; }
+        .gp-close:hover { background: var(--bg-hover); color: var(--text); }
+        .gp-facts { list-style: none; padding: 0; }
+        .gp-facts li { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-2); line-height: 1.4; }
+        .gp-facts li:last-child { border-bottom: none; }
+        .gp-section { margin-top: 12px; }
+        .gp-section h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-3); margin-bottom: 6px; }
+        .gp-rel { font-size: 12px; color: var(--text-2); padding: 3px 0; }
+        .gp-open { display: block; width: 100%; margin-top: 12px; padding: 8px; background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; cursor: pointer; font-size: 12px; text-align: center; }
+        .gp-open:hover { background: var(--accent-glow); }
+        .gp-edge { position: absolute; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 12px; color: var(--text-2); z-index: 20; pointer-events: none; max-width: 240px; }
 
         /* Entities */
         .entities-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
@@ -343,7 +375,10 @@
         </div>
         <div class="sidebar-footer">
             <a href="/">← Home</a>
-            <div style="margin-top:8px;cursor:pointer;color:var(--text-3);font-size:11px;" onclick="openCmdPalette()">⌘K Search</div>
+            <div style="margin-top:8px;display:flex;gap:12px;align-items:center;">
+                <div style="cursor:pointer;color:var(--text-3);font-size:11px;" onclick="openCmdPalette()">⌘K Search</div>
+                <div id="theme-toggle" style="cursor:pointer;color:var(--text-3);font-size:13px;" onclick="toggleTheme()" title="Toggle theme">🌙</div>
+            </div>
         </div>
     </div>
 
@@ -418,6 +453,10 @@
                     <span><span class="ldot" style="background:var(--green)"></span>Technology</span>
                     <span><span class="ldot" style="background:var(--orange)"></span>Company</span>
                     <span><span class="ldot" style="background:var(--pink)"></span>Concept</span>
+                </div>
+                <div class="graph-panel" id="graph-panel" style="display:none">
+                    <div class="gp-header"><span id="gp-name"></span><button class="gp-close" onclick="closeGraphPanel()">✕</button></div>
+                    <div id="gp-body"></div>
                 </div>
             </div>
         </div>
@@ -553,6 +592,22 @@
 const API = window.location.origin;
 let KEY = '';
 function H() { return { 'Authorization': `Bearer ${KEY}`, 'Content-Type': 'application/json' }; }
+
+// Theme toggle
+function toggleTheme() {
+    const isLight = document.documentElement.dataset.theme === 'light';
+    document.documentElement.dataset.theme = isLight ? '' : 'light';
+    localStorage.setItem('mengram_theme', isLight ? 'dark' : 'light');
+    document.getElementById('theme-toggle').textContent = isLight ? '🌙' : '☀️';
+}
+(function initTheme() {
+    const saved = localStorage.getItem('mengram_theme');
+    if (saved === 'light') {
+        document.documentElement.dataset.theme = 'light';
+        const el = document.getElementById('theme-toggle');
+        if (el) el.textContent = '☀️';
+    }
+})();
 function esc(s) { if(!s)return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function escA(s) { return (s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
 
@@ -1120,16 +1175,19 @@ function renderGraph(data) {
     const oldInfo = box.querySelector('.graph-info');
     if(oldInfo) oldInfo.remove();
     const W=box.clientWidth, HH=box.clientHeight;
-    const tc = {person:'#60a5fa',project:'#a855f7',technology:'#34d399',company:'#fb923c',concept:'#f472b6'};
+    const cs = getComputedStyle(document.documentElement);
+    const tc = {person:cs.getPropertyValue('--blue').trim()||'#60a5fa',project:cs.getPropertyValue('--accent').trim()||'#a855f7',technology:cs.getPropertyValue('--green').trim()||'#34d399',company:cs.getPropertyValue('--orange').trim()||'#fb923c',concept:cs.getPropertyValue('--pink').trim()||'#f472b6'};
+    const _borderColor = cs.getPropertyValue('--border').trim()||'#1a1a2e';
+    const _textColor2 = cs.getPropertyValue('--text-2').trim()||'#9898b0';
     const nodes = data.nodes.map(n=>({id:n.name,type:n.type,r:6+Math.min((n.facts_count||0)*1.5,18),c:tc[n.type]||'#888'}));
     const ns = new Set(nodes.map(n=>n.id));
-    const links = data.edges.filter(e=>ns.has(e.source)&&ns.has(e.target)).map(e=>({source:e.source,target:e.target,type:e.type}));
+    const links = data.edges.filter(e=>ns.has(e.source)&&ns.has(e.target)).map(e=>({source:e.source,target:e.target,type:e.type,description:e.description}));
 
     // Show info badge if graph is truncated
     if(data.total_nodes && data.total_nodes > nodes.length) {
         const info = document.createElement('div');
         info.className = 'graph-info';
-        info.style.cssText = 'position:absolute;top:16px;right:16px;background:rgba(5,5,10,0.8);color:var(--text-2);padding:6px 12px;border-radius:8px;font-size:12px;backdrop-filter:blur(8px);';
+        info.style.cssText = 'position:absolute;top:16px;right:16px;background:var(--bg-card);color:var(--text-2);padding:6px 12px;border-radius:8px;font-size:12px;backdrop-filter:blur(8px);border:1px solid var(--border);';
         info.textContent = `Showing ${nodes.length} of ${data.total_nodes} entities`;
         box.appendChild(info);
     }
@@ -1139,6 +1197,7 @@ function renderGraph(data) {
 
     // Zoom
     svg.call(d3.zoom().scaleExtent([0.3,4]).on('zoom', e => g.attr('transform', e.transform)));
+    svg.on('click', () => { closeGraphPanel(); box.querySelectorAll('.gp-edge').forEach(t=>t.remove()); });
 
     const sim = d3.forceSimulation(nodes)
         .force('link',d3.forceLink(links).id(d=>d.id).distance(90))
@@ -1147,7 +1206,23 @@ function renderGraph(data) {
         .force('collision',d3.forceCollide().radius(d=>d.r+6));
 
     const link = g.append('g').selectAll('line').data(links).join('line')
-        .attr('stroke','#1a1a2e').attr('stroke-width',1.2);
+        .attr('stroke',_borderColor).attr('stroke-width',1.2).style('cursor','pointer');
+
+    // Edge click → tooltip
+    link.on('click', function(ev, d) {
+        ev.stopPropagation();
+        // Remove old edge tooltip
+        box.querySelectorAll('.gp-edge').forEach(t=>t.remove());
+        const src = typeof d.source === 'object' ? d.source.id : d.source;
+        const tgt = typeof d.target === 'object' ? d.target.id : d.target;
+        const tip = document.createElement('div');
+        tip.className = 'gp-edge';
+        tip.innerHTML = `<strong>${esc(src)}</strong> <span style="color:var(--accent)">${esc(d.type||'related')}</span> <strong>${esc(tgt)}</strong>${d.description ? `<div style="margin-top:4px;color:var(--text-3)">${esc(d.description)}</div>` : ''}`;
+        tip.style.left = ev.offsetX + 'px';
+        tip.style.top = (ev.offsetY - 40) + 'px';
+        box.appendChild(tip);
+        setTimeout(() => tip.remove(), 4000);
+    });
 
     const node = g.append('g').selectAll('g').data(nodes).join('g')
         .call(d3.drag()
@@ -1157,19 +1232,83 @@ function renderGraph(data) {
 
     node.append('circle').attr('r',d=>d.r).attr('fill',d=>d.c).attr('fill-opacity',0.15)
         .attr('stroke',d=>d.c).attr('stroke-width',1.5).style('cursor','pointer')
-        .on('click',(e,d)=>openEntity(d.id));
+        .on('click',(e,d)=>{e.stopPropagation();openGraphPanel(d.id, node, link, links);});
 
     // Glow on hover
     node.on('mouseenter', function(e,d) { d3.select(this).select('circle').attr('fill-opacity',0.35).attr('stroke-width',2.5); })
-        .on('mouseleave', function(e,d) { d3.select(this).select('circle').attr('fill-opacity',0.15).attr('stroke-width',1.5); });
+        .on('mouseleave', function(e,d) { if(!d._selected) { d3.select(this).select('circle').attr('fill-opacity',0.15).attr('stroke-width',1.5); } });
 
     node.append('text').text(d=>d.id).attr('dy',d=>d.r+14).attr('text-anchor','middle')
-        .attr('fill','#9898b0').attr('font-size','11px').attr('font-family','Sora,sans-serif');
+        .attr('fill',_textColor2).attr('font-size','11px').attr('font-family','Sora,sans-serif');
 
     sim.on('tick',()=>{
         link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
         node.attr('transform',d=>`translate(${d.x},${d.y})`);
     });
+}
+
+// ---- Graph Panel ----
+let _graphNodeRef = null, _graphLinkRef = null, _graphLinksData = null;
+async function openGraphPanel(name, nodeSelection, linkSelection, linksData) {
+    _graphNodeRef = nodeSelection; _graphLinkRef = linkSelection; _graphLinksData = linksData;
+    const panel = document.getElementById('graph-panel');
+    const nameEl = document.getElementById('gp-name');
+    const body = document.getElementById('gp-body');
+    panel.style.display = 'block';
+    nameEl.textContent = name;
+    body.innerHTML = '<div style="color:var(--text-3);font-size:12px;">Loading...</div>';
+
+    // Highlight selected node, dim others
+    if(nodeSelection) {
+        const connected = new Set();
+        (linksData||[]).forEach(l => {
+            const s = typeof l.source === 'object' ? l.source.id : l.source;
+            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            if(s === name) connected.add(t);
+            if(t === name) connected.add(s);
+        });
+        nodeSelection.each(function(d) {
+            const el = d3.select(this);
+            if(d.id === name) { d._selected = true; el.select('circle').attr('fill-opacity',0.5).attr('stroke-width',3); el.attr('opacity',1); }
+            else if(connected.has(d.id)) { d._selected = false; el.select('circle').attr('fill-opacity',0.25); el.attr('opacity',0.9); }
+            else { d._selected = false; el.select('circle').attr('fill-opacity',0.08).attr('stroke-width',1); el.attr('opacity',0.3); }
+        });
+        if(linkSelection) linkSelection.each(function(d) {
+            const s = typeof d.source === 'object' ? d.source.id : d.source;
+            const t = typeof d.target === 'object' ? d.target.id : d.target;
+            d3.select(this).attr('opacity', (s===name||t===name) ? 1 : 0.15);
+        });
+    }
+
+    try {
+        const d = await (await fetch(`${API}/v1/memory/${encodeURIComponent(name)}`,{headers:H()})).json();
+        let h = `<span class="e-tag b-${d.type}" style="font-size:11px;">${d.type}</span>`;
+        if(d.facts?.length) {
+            h += `<div class="gp-section"><h4>Facts (${d.facts.length})</h4><ul class="gp-facts">`;
+            for(const f of d.facts.slice(0,10)) h += `<li>${esc(f)}</li>`;
+            if(d.facts.length > 10) h += `<li style="color:var(--text-3)">+${d.facts.length-10} more...</li>`;
+            h += '</ul></div>';
+        }
+        if(d.relations?.length) {
+            h += `<div class="gp-section"><h4>Relations (${d.relations.length})</h4>`;
+            for(const r of d.relations.slice(0,8)) h += `<div class="gp-rel">${r.direction==='outgoing'?'→':'←'} <strong>${esc(r.target)}</strong> <span style="color:var(--accent)">${esc(r.type)}</span></div>`;
+            if(d.relations.length > 8) h += `<div class="gp-rel" style="color:var(--text-3)">+${d.relations.length-8} more...</div>`;
+            h += '</div>';
+        }
+        h += `<button class="gp-open" onclick="closeGraphPanel();openEntity('${escA(name)}')">Open Full Details</button>`;
+        body.innerHTML = h;
+    } catch(e) { body.innerHTML = '<div style="color:var(--red);font-size:12px;">Failed to load</div>'; }
+}
+
+function closeGraphPanel() {
+    document.getElementById('graph-panel').style.display = 'none';
+    // Reset node highlights
+    if(_graphNodeRef) _graphNodeRef.each(function(d) {
+        d._selected = false;
+        d3.select(this).select('circle').attr('fill-opacity',0.15).attr('stroke-width',1.5);
+        d3.select(this).attr('opacity',1);
+    });
+    if(_graphLinkRef) _graphLinkRef.attr('opacity',1);
 }
 
 // ---- Entities ----

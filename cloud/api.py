@@ -2012,6 +2012,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             )
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Fact not found")
+        store._schedule_matview_refresh()
         return {"archived": fact, "entity": entity_name}
 
     @app.get("/v1/timeline", tags=["Memory"])

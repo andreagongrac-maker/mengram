@@ -703,18 +703,8 @@ class CloudStore:
                 ON memory_triggers(user_id, sub_user_id)
             """)
 
-            # Recreate entity_overview view — use subqueries instead of JOINs
-            # to avoid cartesian product (449 entities × 3500 facts × 2300 knowledge = billions of rows)
-            cur.execute("DROP VIEW IF EXISTS entity_overview")
-            cur.execute("""
-                CREATE VIEW entity_overview AS
-                SELECT e.id, e.user_id, e.sub_user_id, e.name, e.type,
-                       e.created_at, e.updated_at,
-                       (SELECT COUNT(*) FROM facts f WHERE f.entity_id = e.id) AS facts_count,
-                       (SELECT COUNT(*) FROM knowledge k WHERE k.entity_id = e.id) AS knowledge_count,
-                       (SELECT COUNT(*) FROM relations r WHERE r.source_id = e.id OR r.target_id = e.id) AS relations_count
-                FROM entities e
-            """)
+            # entity_overview view — now handled by v2.17 as MATERIALIZED VIEW
+            # (kept here as no-op for migration ordering, v2.17 replaces it)
         logger.info("✅ Migration complete (v2.12: sub-user isolation)")
 
         # --- v2.13 Temporal metadata + raw chunk indexing ---
@@ -848,6 +838,34 @@ class CloudStore:
                 WHERE linked_procedure_id IS NOT NULL
             """)
         logger.info("✅ Migration complete (v2.16: performance indexes)")
+
+        # --- v2.17 Materialized view for entity_overview ---
+        with self._cursor() as cur:
+            # Check if entity_overview is a regular VIEW (not materialized) and drop it
+            cur.execute("""
+                SELECT COUNT(*) FROM pg_catalog.pg_views
+                WHERE viewname = 'entity_overview'
+            """)
+            if cur.fetchone()[0] > 0:
+                cur.execute("DROP VIEW entity_overview")
+                logger.info("Dropped regular VIEW entity_overview → will recreate as MATERIALIZED")
+
+            # Create materialized view (idempotent)
+            cur.execute("""
+                CREATE MATERIALIZED VIEW IF NOT EXISTS entity_overview AS
+                SELECT e.id, e.user_id, e.sub_user_id, e.name, e.type,
+                       e.created_at, e.updated_at,
+                       (SELECT COUNT(*) FROM facts f WHERE f.entity_id = e.id AND f.archived = FALSE) AS facts_count,
+                       (SELECT COUNT(*) FROM knowledge k WHERE k.entity_id = e.id) AS knowledge_count,
+                       (SELECT COUNT(*) FROM relations r WHERE r.source_id = e.id OR r.target_id = e.id) AS relations_count
+                FROM entities e
+            """)
+            # Unique index required for REFRESH CONCURRENTLY
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_matview_eo_id ON entity_overview (id)")
+            # Query indexes
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_matview_eo_user_sub ON entity_overview (user_id, sub_user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_matview_eo_facts ON entity_overview (user_id, sub_user_id, facts_count DESC)")
+        logger.info("✅ Migration complete (v2.17: materialized view)")
 
         with self._cursor() as cur:
             cur.execute("SELECT pg_advisory_unlock(42)")
@@ -1415,6 +1433,7 @@ class CloudStore:
                 "count": len(added_facts)
             })
 
+        self._schedule_matview_refresh()
         return entity_id
 
     def _save_relation(self, user_id: str, source_entity_id: str,
@@ -1686,6 +1705,26 @@ class CloudStore:
 
             return "\n".join(lines)
 
+    # ---- Materialized View Refresh ----
+
+    def refresh_entity_overview(self):
+        """Refresh materialized view concurrently (non-blocking reads during refresh)."""
+        try:
+            with self._cursor() as cur:
+                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY entity_overview")
+            logger.debug("Refreshed entity_overview matview")
+        except Exception as e:
+            logger.warning(f"Failed to refresh entity_overview: {e}")
+
+    def _schedule_matview_refresh(self):
+        """Schedule a debounced refresh of entity_overview (max once per 5s)."""
+        cache_key = "matview_refresh_pending"
+        if self.cache.get(cache_key):
+            return  # Already scheduled recently
+        self.cache.set(cache_key, True, ttl=5)
+        import threading
+        threading.Thread(target=self.refresh_entity_overview, daemon=True).start()
+
     def delete_entity(self, user_id: str, name: str, sub_user_id: str = "default") -> bool:
         """Delete entity and all related data."""
         with self._cursor() as cur:
@@ -1696,6 +1735,7 @@ class CloudStore:
             deleted = cur.fetchone() is not None
         if deleted:
             self.cache.invalidate(f"stats:{user_id}")
+            self._schedule_matview_refresh()
         return deleted
 
     def delete_all_entities(self, user_id: str, sub_user_id: str = "default") -> int:
@@ -1708,6 +1748,7 @@ class CloudStore:
             count = cur.rowcount
         self.cache.invalidate(f"stats:{user_id}")
         self.cache.invalidate(f"graph:{user_id}:{sub_user_id}:150")
+        self._schedule_matview_refresh()
         return count
 
     # ---- Graph Traversal ----

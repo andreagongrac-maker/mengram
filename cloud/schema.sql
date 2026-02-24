@@ -452,8 +452,8 @@ CREATE INDEX idx_usage_counters_user_period ON usage_counters(user_id, period_st
 -- Helper views
 -- ============================================
 
--- Entity overview with counts (subqueries, not JOINs — avoids cartesian product)
-CREATE VIEW entity_overview AS
+-- Entity overview with counts (materialized for performance, refresh via store._schedule_matview_refresh)
+CREATE MATERIALIZED VIEW entity_overview AS
 SELECT
     e.id,
     e.user_id,
@@ -462,10 +462,15 @@ SELECT
     e.type,
     e.created_at,
     e.updated_at,
-    (SELECT COUNT(*) FROM facts f WHERE f.entity_id = e.id) AS facts_count,
+    (SELECT COUNT(*) FROM facts f WHERE f.entity_id = e.id AND f.archived = FALSE) AS facts_count,
     (SELECT COUNT(*) FROM knowledge k WHERE k.entity_id = e.id) AS knowledge_count,
     (SELECT COUNT(*) FROM relations r WHERE r.source_id = e.id OR r.target_id = e.id) AS relations_count
 FROM entities e;
+
+-- Required for REFRESH CONCURRENTLY
+CREATE UNIQUE INDEX idx_matview_eo_id ON entity_overview (id);
+CREATE INDEX idx_matview_eo_user_sub ON entity_overview (user_id, sub_user_id);
+CREATE INDEX idx_matview_eo_facts ON entity_overview (user_id, sub_user_id, facts_count DESC);
 
 -- ============================================
 -- Example: semantic search query
