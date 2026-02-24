@@ -932,7 +932,7 @@ a{{display:block;padding:10px 20px;border-radius:8px;text-decoration:none;font-s
 <p>An account with <span class="email">{email}</span> is already registered.</p>
 <p>Use your existing API key to log in, or reset it if you lost it.</p>
 <a class="dash" href="/dashboard">Go to Console</a>
-<a class="reset" href="/dashboard">Lost your key? Reset it →</a>
+<a class="reset" href="/dashboard?reset">Lost your key? Reset it →</a>
 </div></body></html>"""
 
     def _github_success_page(api_key: str, email: str) -> str:

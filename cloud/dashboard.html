@@ -824,6 +824,8 @@ document.getElementById('key-input').addEventListener('keydown', e => { if(e.key
 // Pre-fill saved key but don't auto-login
 const saved = localStorage.getItem('mengram_key');
 if(saved) { document.getElementById('key-input').value = saved; }
+// Auto-open reset flow if ?reset in URL
+if(new URLSearchParams(location.search).has('reset')) { showResetFlow(); }
 
 async function doLogin() { await tryLogin(document.getElementById('key-input').value.trim()); }
 function logout() {
