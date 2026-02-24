@@ -433,8 +433,8 @@ Be strict — only include entities that directly answer or relate to the query.
         max_allowed = plan_quotas.get(quota_key, 0)
         if max_allowed == -1:
             return  # unlimited
-        # Fast reject: if already blocked this period, skip DB entirely
-        block_key = f"{ctx.user_id}:{action}"
+        # Fast reject: if already blocked this period+plan, skip DB entirely
+        block_key = f"{ctx.user_id}:{action}:{ctx.plan}"
         period = str(datetime.date.today().replace(day=1))
         if _quota_blocked.get(block_key) == period:
             logger.info(f"🚫 BLOCKED {action} | user={ctx.user_id[:8]} | plan={ctx.plan} (cached)")
@@ -450,12 +450,12 @@ Be strict — only include entities that directly answer or relate to the query.
             raise
 
     # In-memory set of blocked user:action pairs (reset on restart / period change)
-    _quota_blocked: dict[str, str] = {}  # "user_id:action" -> period_start
+    _quota_blocked: dict[str, str] = {}  # "user_id:action:plan" -> period_start
 
     def _raise_quota_error(action, max_allowed, current, plan, user_id=None):
         if user_id:
             period = str(datetime.date.today().replace(day=1))
-            _quota_blocked[f"{user_id}:{action}"] = period
+            _quota_blocked[f"{user_id}:{action}:{plan}"] = period
             logger.warning(f"🚫 QUOTA {action} | user={user_id[:8]} | {current}/{max_allowed} | plan={plan}")
         raise HTTPException(
             status_code=402,
