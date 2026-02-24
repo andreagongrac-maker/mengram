@@ -2421,7 +2421,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         }
 
     @app.post("/v1/billing/checkout", tags=["Billing"])
-    async def create_checkout(plan: str = Query(..., regex="^(pro|business)$"), ctx: AuthContext = Depends(auth)):
+    async def create_checkout(plan: str = Query(..., pattern="^(pro|business)$"), ctx: AuthContext = Depends(auth)):
         """Create Paddle checkout transaction for plan upgrade. Returns checkout URL."""
         user_id = ctx.user_id
         if not PADDLE_API_KEY:

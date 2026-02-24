@@ -725,6 +725,15 @@ document.addEventListener('keydown', e => {
         if (document.getElementById('confirm-bg').classList.contains('show')) { closeConfirm(); return; }
         if (document.getElementById('modal-bg').classList.contains('show')) { closeModal(); return; }
     }
+    // Number keys 1-8 = switch tabs (only when not in input/textarea)
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tabKeys = { '1':'feed', '2':'agents', '3':'insights', '4':'graph', '5':'entities', '6':'procedures', '7':'billing', '8':'settings' };
+    if (tabKeys[e.key] && document.getElementById('app').classList.contains('active')) {
+        e.preventDefault();
+        switchTabDirect(tabKeys[e.key]);
+    }
 });
 
 document.getElementById('key-input').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
@@ -1164,15 +1173,47 @@ async function shareEntityDialog(name) {
     try {
         const d = await (await fetch(`${API}/v1/teams`,{headers:H()})).json();
         if (!d.teams?.length) { showToast('No teams yet. Create a team in Settings first.', 'info'); return; }
-        const teamNames = d.teams.map((t,i) => `${i+1}. ${t.name}`).join('\n');
-        const choice = prompt(`Share "${name}" to which team?\n\n${teamNames}\n\nEnter number:`);
-        if (!choice) return;
-        const idx = parseInt(choice) - 1;
-        if (idx < 0 || idx >= d.teams.length) { showToast('Invalid choice', 'error'); return; }
-        const team = d.teams[idx];
-        const r = await fetch(`${API}/v1/teams/${team.id}/share`, {method:'POST', headers:H(), body:JSON.stringify({entity:name})});
-        if (r.ok) { showToast(`"${name}" shared with ${team.name}!`, 'success'); }
-        else { const err = await r.json(); showToast(err.detail || 'Failed to share', 'error'); }
+        if (d.teams.length === 1) {
+            const team = d.teams[0];
+            showConfirm('Share Entity', `Share "${name}" with team "${team.name}"?`, async () => {
+                const r = await fetch(`${API}/v1/teams/${team.id}/share`, {method:'POST', headers:H(), body:JSON.stringify({entity:name})});
+                if (r.ok) { showToast(`"${name}" shared with ${team.name}!`, 'success'); }
+                else { const err = await r.json(); showToast(err.detail || 'Failed to share', 'error'); }
+            });
+            return;
+        }
+        // Multiple teams — show picker modal
+        const bg = document.getElementById('confirm-bg');
+        const title = document.getElementById('confirm-title');
+        const msg = document.getElementById('confirm-msg');
+        const okBtn = document.getElementById('confirm-ok');
+        title.textContent = `Share "${name}"`;
+        let selectedTeam = null;
+        msg.innerHTML = '<div style="margin-top:8px;">' + d.teams.map((t, i) =>
+            `<div class="share-team-opt" data-idx="${i}" style="padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:all 0.15s;font-size:14px;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="if(!this.classList.contains('selected'))this.style.borderColor='var(--border)'">${esc(t.name)} <span style="font-size:12px;color:var(--text-3);">(${t.member_count} members)</span></div>`
+        ).join('') + '</div>';
+        okBtn.className = 'confirm-btn confirm-ok';
+        okBtn.textContent = 'Share';
+        okBtn.disabled = true;
+        okBtn.style.opacity = '0.5';
+        msg.querySelectorAll('.share-team-opt').forEach(el => {
+            el.onclick = () => {
+                msg.querySelectorAll('.share-team-opt').forEach(e => { e.classList.remove('selected'); e.style.borderColor = 'var(--border)'; e.style.background = 'var(--bg)'; });
+                el.classList.add('selected');
+                el.style.borderColor = 'var(--accent)';
+                el.style.background = 'var(--accent-dim)';
+                selectedTeam = d.teams[parseInt(el.dataset.idx)];
+                okBtn.disabled = false;
+                okBtn.style.opacity = '1';
+            };
+        });
+        _confirmCb = async () => {
+            if (!selectedTeam) return;
+            const r = await fetch(`${API}/v1/teams/${selectedTeam.id}/share`, {method:'POST', headers:H(), body:JSON.stringify({entity:name})});
+            if (r.ok) { showToast(`"${name}" shared with ${selectedTeam.name}!`, 'success'); }
+            else { const err = await r.json(); showToast(err.detail || 'Failed to share', 'error'); }
+        };
+        bg.classList.add('show');
     } catch(e) { showToast('Error: ' + e.message, 'error'); }
 }
 
