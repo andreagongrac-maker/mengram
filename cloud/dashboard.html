@@ -1337,20 +1337,18 @@ async function loadBilling() {
 
 async function upgradePlan(plan) {
     try {
-        const r = await fetch(`${API}/v1/billing/checkout`, {
-            method: 'POST', headers: H(),
-            body: JSON.stringify({ plan })
+        const r = await fetch(`${API}/v1/billing/checkout?plan=${plan}`, {
+            method: 'POST', headers: H()
         });
         const d = await r.json();
         if (d.checkout_url) {
-            // Open Paddle checkout overlay if Paddle.js loaded, otherwise redirect
             if (window.Paddle && d.transaction_id) {
                 Paddle.Checkout.open({ transactionId: d.transaction_id });
-            } else if (d.checkout_url) {
+            } else {
                 window.open(d.checkout_url, '_blank');
             }
         } else {
-            alert(d.detail || 'Failed to create checkout');
+            alert(typeof d.detail === 'string' ? d.detail : JSON.stringify(d));
         }
     } catch(e) { alert('Error: ' + e.message); }
 }
@@ -1362,7 +1360,7 @@ async function openPortal() {
         if (d.portal_url) {
             window.open(d.portal_url, '_blank');
         } else {
-            alert(d.detail || 'Failed to open billing portal');
+            alert(typeof d.detail === 'string' ? d.detail : JSON.stringify(d));
         }
     } catch(e) { alert('Error: ' + e.message); }
 }
