@@ -241,7 +241,7 @@ agent = Agent(role="Support", tools=tools)
 openclaw plugins install openclaw-mengram
 ```
 
-Auto-recall before every turn, auto-capture after. 6 tools, slash commands, Graph RAG.
+Auto-recall before every turn, auto-capture after. 12 tools, slash commands, Graph RAG.
 
 [GitHub](https://github.com/alibaizhanov/openclaw-mengram) · [npm](https://www.npmjs.com/package/openclaw-mengram)
 

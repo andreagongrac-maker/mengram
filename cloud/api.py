@@ -197,7 +197,7 @@ results = m.search_all("deployment")  # semantic + episodic + procedural
 profile = m.get_profile()             # instant system prompt
 ```
         """,
-        version="2.14.5",
+        version="2.15.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_tags=[
@@ -1410,7 +1410,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     @app.get("/v1/health", tags=["System"])
     async def health(authorization: str = Header(None)):
         """Health check. Returns basic status for unauthenticated, detailed diagnostics for authenticated."""
-        result = {"status": "ok", "version": "2.14.5"}
+        result = {"status": "ok", "version": "2.15.0"}
 
         # Only expose detailed diagnostics to authenticated users
         if authorization:
