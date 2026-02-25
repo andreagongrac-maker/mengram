@@ -653,6 +653,28 @@ Be strict — only include entities that directly answer or relate to the query.
     async def robots():
         return "User-agent: *\nAllow: /\nSitemap: https://mengram.io/sitemap.xml"
 
+    @app.get("/sitemap.xml", response_class=PlainTextResponse)
+    async def sitemap():
+        """XML sitemap for search engines."""
+        urls = [
+            "https://mengram.io/",
+            "https://mengram.io/docs",
+            "https://mengram.io/pricing",
+            "https://mengram.io/vs/mem0",
+            "https://mengram.io/vs/zep",
+            "https://mengram.io/vs/letta",
+        ]
+        entries = "\n".join(
+            f"  <url><loc>{u}</loc><changefreq>weekly</changefreq></url>"
+            for u in urls
+        )
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            f"{entries}\n"
+            "</urlset>"
+        )
+
     @app.get("/dashboard", response_class=HTMLResponse)
     async def dashboard():
         """Memory Console."""
@@ -676,6 +698,121 @@ Be strict — only include entities that directly answer or relate to the query.
         """Refund Policy."""
         p = Path(__file__).parent / "refund.html"
         return p.read_text(encoding="utf-8")
+
+    # ---- VS / Comparison pages (SEO) ----
+    VS_PAGES = {
+        "mem0": {
+            "slug": "mem0",
+            "name": "Mem0",
+            "tagline": "Both store memories. Only Mengram learns workflows.",
+            "description": "Mem0 is a popular fact-storage tool with 25K+ GitHub stars. Mengram adds episodic memory, procedural memory that evolves from failures, and Cognitive Profile.",
+            "their_good": [
+                "25K+ GitHub stars — largest community",
+                "Well-funded ($24M, YC S24)",
+                "Solid fact retrieval (graph + vector + KV)",
+                "Python &amp; JS SDKs with good docs",
+            ],
+            "their_missing": [
+                "No episodic memory (events, decisions)",
+                "No procedural memory (workflows)",
+                "No self-improving workflows",
+                "No Cognitive Profile",
+                "No unified search across memory types",
+                "$19–249/mo paid tiers",
+            ],
+            "has_semantic": "&#x2705;",
+            "has_episodic": "&#x274C;",
+            "has_multiuser": "&#x2705;",
+            "has_graph": "&#x2705;",
+            "has_mcp": "&#x2705;",
+            "has_selfhost": "&#x2705;",
+            "their_price": "$19–249/mo",
+            "best_for_them": "Reliable fact storage with the largest community. Great if you only need to remember user preferences and personal details.",
+            "best_for_us": "Agents that learn from experience — remember facts AND events AND workflows. Free cloud API with 3 memory types, Cognitive Profile, and MCP.",
+            "website": "https://mem0.ai",
+            "seo_title": "Mengram vs Mem0 — AI Memory Comparison (2026)",
+            "seo_description": "Compare Mengram and Mem0 for AI agent memory. Mengram adds episodic memory, procedural memory that evolves from failures, and Cognitive Profile. Free alternative to Mem0.",
+            "seo_keywords": "Mem0 alternative, Mengram vs Mem0, AI memory comparison, mem0ai alternative, best AI memory tool",
+        },
+        "zep": {
+            "slug": "zep",
+            "name": "Zep",
+            "tagline": "Zep tracks time. Mengram learns from experience.",
+            "description": "Zep is an enterprise AI memory tool with temporal knowledge graph and SOC2/HIPAA compliance. Mengram offers 3 memory types, procedural learning, and a free cloud API.",
+            "their_good": [
+                "Temporal knowledge graph — tracks how facts change over time",
+                "SOC2 and HIPAA compliance",
+                "Sub-200ms latency targets",
+                "Python, TypeScript, and Go SDKs",
+            ],
+            "their_missing": [
+                "Cloud-only (community edition deprecated)",
+                "Enterprise pricing only — no free tier",
+                "No episodic memory",
+                "No procedural memory",
+                "No self-improving workflows",
+                "No Cognitive Profile",
+            ],
+            "has_semantic": "&#x2705;",
+            "has_episodic": "&#x274C;",
+            "has_multiuser": "&#x2705;",
+            "has_graph": "&#x2705;",
+            "has_mcp": "&#x274C;",
+            "has_selfhost": "&#x274C;",
+            "their_price": "Enterprise",
+            "best_for_them": "Enterprise apps in regulated industries (healthcare, finance) where SOC2/HIPAA and temporal reasoning are requirements.",
+            "best_for_us": "Agents that learn and improve over time. 3 memory types, free cloud API, self-hostable, MCP + LangChain + CrewAI integrations.",
+            "website": "https://www.getzep.com",
+            "seo_title": "Mengram vs Zep — AI Memory Comparison (2026)",
+            "seo_description": "Compare Mengram and Zep for AI agent memory. Mengram offers 3 memory types and procedural learning. Free open-source alternative to Zep's enterprise-only pricing.",
+            "seo_keywords": "Zep alternative, Mengram vs Zep, AI memory comparison, getzep alternative, free AI memory API",
+        },
+        "letta": {
+            "slug": "letta",
+            "name": "Letta",
+            "tagline": "Letta lets agents self-curate. Mengram gives them 3 memory types.",
+            "description": "Letta (formerly MemGPT) pioneered agent-controlled memory from UC Berkeley research. Mengram takes a different approach with 3 structured memory types and procedural learning.",
+            "their_good": [
+                "Novel agent-controlled memory architecture",
+                "UC Berkeley research-backed (MemGPT paper)",
+                "Free and self-hostable",
+                "Great for long-running conversations",
+            ],
+            "their_missing": [
+                "No procedural memory",
+                "Only partial episodic memory (conversation archival)",
+                "No self-improving workflows",
+                "No Cognitive Profile",
+                "Agent memory management adds unpredictability",
+                "Limited managed hosting options",
+            ],
+            "has_semantic": "&#x2705;",
+            "has_episodic": "Partial",
+            "has_multiuser": "&#x274C;",
+            "has_graph": "&#x274C;",
+            "has_mcp": "&#x2705;",
+            "has_selfhost": "&#x2705;",
+            "their_price": "Free (self-host)",
+            "best_for_them": "Long-running conversational agents where the agent should organically manage its own context and memory.",
+            "best_for_us": "Structured memory with 3 types that the developer controls. Procedures evolve from failures. Free cloud API + MCP + framework integrations.",
+            "website": "https://www.letta.com",
+            "seo_title": "Mengram vs Letta (MemGPT) — AI Memory Comparison (2026)",
+            "seo_description": "Compare Mengram and Letta (MemGPT) for AI agent memory. Mengram offers semantic + episodic + procedural memory with self-improving workflows. Free alternative.",
+            "seo_keywords": "Letta alternative, MemGPT alternative, Mengram vs Letta, AI memory comparison, best AI memory tool 2026",
+        },
+    }
+
+    @app.get("/vs/{competitor}", response_class=HTMLResponse)
+    async def vs_page(competitor: str):
+        """SEO comparison page: Mengram vs competitor."""
+        data = VS_PAGES.get(competitor)
+        if not data:
+            raise HTTPException(404, "Comparison page not found")
+        template_path = Path(__file__).parent / "vs.html"
+        html = template_path.read_text(encoding="utf-8")
+        data["their_good_html"] = "".join(f"<li>{x}</li>" for x in data["their_good"])
+        data["their_missing_html"] = "".join(f"<li>{x}</li>" for x in data["their_missing"])
+        return html.format(**data)
 
     @app.get("/extension/download")
     async def download_extension():
