@@ -3123,6 +3123,64 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
     # ---- MCP over HTTP (SSE transport for Smithery / remote MCP clients) ----
 
+    # ---- MCP Server Card (for Smithery discovery) ----
+
+    @app.get("/.well-known/mcp/server-card.json")
+    async def mcp_server_card():
+        return {
+            "serverInfo": {"name": "mengram", "version": "2.15.0"},
+            "authentication": {"required": True, "schemes": ["bearer"]},
+            "tools": [
+                {"name": "remember", "description": "Save knowledge from conversation to cloud memory.",
+                 "inputSchema": {"type": "object", "properties": {"conversation": {"type": "array", "items": {"type": "object", "properties": {"role": {"type": "string"}, "content": {"type": "string"}}, "required": ["role", "content"]}}}, "required": ["conversation"]}},
+                {"name": "remember_text", "description": "Remember knowledge from text.",
+                 "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+                {"name": "recall", "description": "Semantic search through cloud memory. Use specific keywords.",
+                 "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+                {"name": "search", "description": "Structured search — returns JSON with scores, facts, knowledge.",
+                 "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "top_k": {"type": "integer", "default": 5}}, "required": ["query"]}},
+                {"name": "search_all", "description": "Unified search across all memory types — semantic, episodic, and procedural.",
+                 "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 5}}, "required": ["query"]}},
+                {"name": "timeline", "description": "Search memory by time range.",
+                 "inputSchema": {"type": "object", "properties": {"after": {"type": "string"}, "before": {"type": "string"}}}},
+                {"name": "vault_stats", "description": "Memory statistics.",
+                 "inputSchema": {"type": "object", "properties": {}}},
+                {"name": "get_entity", "description": "Get details of a specific entity — facts, relations, knowledge.",
+                 "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+                {"name": "delete_entity", "description": "Delete an entity and all its data.",
+                 "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+                {"name": "list_episodes", "description": "List or search episodic memories (events, interactions).",
+                 "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 20}}}},
+                {"name": "list_procedures", "description": "List learned workflows/procedures from memory.",
+                 "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 10}}}},
+                {"name": "procedure_feedback", "description": "Record success or failure for a procedure. Triggers evolution on failure.",
+                 "inputSchema": {"type": "object", "properties": {"procedure_id": {"type": "string"}, "success": {"type": "boolean"}, "context": {"type": "string"}, "failed_at_step": {"type": "integer"}}, "required": ["procedure_id", "success"]}},
+                {"name": "procedure_history", "description": "Show how a procedure evolved over time — all versions.",
+                 "inputSchema": {"type": "object", "properties": {"procedure_id": {"type": "string"}}, "required": ["procedure_id"]}},
+                {"name": "run_agents", "description": "Run memory agents: curator, connector, digest, or all.",
+                 "inputSchema": {"type": "object", "properties": {"agent": {"type": "string", "enum": ["curator", "connector", "digest", "all"]}, "auto_fix": {"type": "boolean", "default": True}}}},
+                {"name": "get_insights", "description": "Get AI-generated insights — patterns, connections, reflections.",
+                 "inputSchema": {"type": "object", "properties": {}}},
+                {"name": "get_graph", "description": "Get the knowledge graph — all entities and relationships.",
+                 "inputSchema": {"type": "object", "properties": {}}},
+                {"name": "get_triggers", "description": "List smart triggers — reminders, contradictions, patterns.",
+                 "inputSchema": {"type": "object", "properties": {"include_fired": {"type": "boolean", "default": False}}}},
+                {"name": "get_feed", "description": "Get activity feed — recent memory changes and events.",
+                 "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 20}}}},
+                {"name": "archive_fact", "description": "Archive a specific fact on an entity (soft-delete).",
+                 "inputSchema": {"type": "object", "properties": {"entity_name": {"type": "string"}, "fact_content": {"type": "string"}}, "required": ["entity_name", "fact_content"]}},
+                {"name": "merge_entities", "description": "Merge two entities into one — combines facts, relations, knowledge.",
+                 "inputSchema": {"type": "object", "properties": {"source": {"type": "string"}, "target": {"type": "string"}}, "required": ["source", "target"]}},
+                {"name": "reflect", "description": "Trigger AI reflection on memories — find patterns and insights.",
+                 "inputSchema": {"type": "object", "properties": {}}},
+            ],
+            "resources": [
+                {"uri": "memory://profile", "name": "Cognitive Profile", "description": "LLM-generated user profile from all memory types.", "mimeType": "text/markdown"},
+                {"uri": "memory://procedures", "name": "Active Procedures", "description": "Learned workflows with steps and reliability stats.", "mimeType": "text/markdown"},
+                {"uri": "memory://triggers", "name": "Pending Triggers", "description": "Smart triggers: reminders, contradictions, patterns.", "mimeType": "text/markdown"},
+            ],
+        }
+
     try:
         from mcp.server.sse import SseServerTransport
         from api.cloud_mcp_server import create_cloud_mcp_server as _create_mcp
