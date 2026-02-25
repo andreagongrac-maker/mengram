@@ -3121,6 +3121,63 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
         return {"received": True}
 
+    # ---- MCP over HTTP (SSE transport for Smithery / remote MCP clients) ----
+
+    try:
+        from mcp.server.sse import SseServerTransport
+        from api.cloud_mcp_server import create_cloud_mcp_server as _create_mcp
+        from cloud.client import CloudMemory as _CloudMemory
+        from starlette.responses import JSONResponse as _JSONResponse
+
+        _mcp_sse = SseServerTransport("/mcp/messages/")
+
+        def _extract_mcp_key(request: Request) -> str:
+            """Extract API key from Authorization header, apiKey header, or query param."""
+            # 1. Standard Authorization: Bearer om-...
+            auth = request.headers.get("authorization", "")
+            if auth:
+                return auth.replace("Bearer ", "").strip()
+            # 2. Smithery-style apiKey header
+            api_key = request.headers.get("apikey", "")
+            if api_key:
+                return api_key.strip()
+            # 3. Query param fallback
+            return request.query_params.get("apiKey", "").strip()
+
+        async def _handle_mcp_sse(request: Request):
+            """SSE endpoint — clients connect here first."""
+            key = _extract_mcp_key(request)
+            if not key:
+                return _JSONResponse({"error": "Missing API key"}, status_code=401)
+            uid = store.verify_api_key(key)
+            if not uid:
+                return _JSONResponse({"error": "Invalid API key"}, status_code=401)
+
+            base = os.environ.get("MENGRAM_URL", "https://mengram.io")
+            mem = _CloudMemory(api_key=key, base_url=base)
+            mcp_server = _create_mcp(mem)
+
+            async with _mcp_sse.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await mcp_server.run(
+                    streams[0], streams[1],
+                    mcp_server.create_initialization_options()
+                )
+
+        async def _handle_mcp_messages(request: Request):
+            """POST endpoint — clients send MCP messages here."""
+            await _mcp_sse.handle_post_message(
+                request.scope, request.receive, request._send
+            )
+
+        app.add_route("/mcp/sse", _handle_mcp_sse)
+        app.add_route("/mcp/messages/", _handle_mcp_messages, methods=["POST"])
+        logger.info("✅ MCP HTTP (SSE) transport enabled at /mcp/sse")
+
+    except ImportError:
+        logger.info("ℹ️  MCP SSE transport not available (mcp package not installed)")
+
     return app
 
 
