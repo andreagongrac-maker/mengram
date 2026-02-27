@@ -1,0 +1,16 @@
+.git
+__pycache__
+*.pyc
+*.egg-info
+dist
+build
+.venv
+venv
+node_modules
+sdk/
+examples/
+tests/
+blog/
+*.md
+!requirements.txt
+.claude/
