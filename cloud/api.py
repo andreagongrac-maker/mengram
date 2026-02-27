@@ -3443,7 +3443,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     @app.get("/v1/health", tags=["System"])
     async def health(authorization: str = Header(None)):
         """Health check. Returns basic status for unauthenticated, detailed diagnostics for authenticated."""
-        result = {"status": "ok", "version": "2.15.0"}
+        result = {"status": "ok", "version": "2.15.1"}
 
         # Only expose detailed diagnostics to authenticated users
         if authorization:
