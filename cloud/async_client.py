@@ -147,13 +147,15 @@ class AsyncCloudMemory:
     async def search(self, query: str, user_id: str = "default",
                      limit: int = 5, agent_id: str = None,
                      run_id: str = None, app_id: str = None,
-                     graph_depth: int = 2) -> list[dict]:
+                     graph_depth: int = 2,
+                     filters: dict = None) -> list[dict]:
         """Semantic search across memories."""
         body = {"query": query, "user_id": user_id, "limit": limit,
                 "graph_depth": graph_depth}
         if agent_id: body["agent_id"] = agent_id
         if run_id: body["run_id"] = run_id
         if app_id: body["app_id"] = app_id
+        if filters: body["filters"] = filters
         result = await self._request("POST", "/v1/search", body)
         return result.get("results", [])
 

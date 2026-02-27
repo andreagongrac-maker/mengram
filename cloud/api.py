@@ -91,6 +91,7 @@ class SearchRequest(BaseModel):
     app_id: str | None = None
     limit: int = 5
     graph_depth: int = 2  # 0=no graph, 1=1-hop, 2=2-hop (default)
+    filters: dict | None = None  # metadata filters, e.g. {"agent_id": "support-bot"}
 
 class FeedbackRequest(BaseModel):
     context: str | None = None         # What went wrong (triggers evolution on failure)
@@ -2973,8 +2974,19 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         import hashlib as _hashlib
 
         sub_uid = req.user_id or "default"
+
+        # Build metadata filters from explicit fields + filters dict
+        meta_filters = dict(req.filters) if req.filters else {}
+        if req.agent_id:
+            meta_filters["agent_id"] = req.agent_id
+        if req.run_id:
+            meta_filters["run_id"] = req.run_id
+        if req.app_id:
+            meta_filters["app_id"] = req.app_id
+
         # ---- Redis cache: same query → instant response ----
-        cache_key = f"search:{user_id}:{sub_uid}:{_hashlib.md5(f'{req.query}:{req.limit}:{req.graph_depth}'.encode()).hexdigest()}"
+        filter_str = json.dumps(meta_filters, sort_keys=True) if meta_filters else ""
+        cache_key = f"search:{user_id}:{sub_uid}:{_hashlib.md5(f'{req.query}:{req.limit}:{req.graph_depth}:{filter_str}'.encode()).hexdigest()}"
         cached = store.cache.get(cache_key)
         if cached:
             store.log_usage(user_id, "search")
@@ -2996,13 +3008,13 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             if emb is not None:
                 results = store.search_vector_with_teams(user_id, emb, top_k=search_limit,
                                               query_text=req.query, graph_depth=req.graph_depth,
-                                              sub_user_id=sub_uid)
+                                              sub_user_id=sub_uid, meta_filters=meta_filters)
                 # Fallback: if nothing found, retry with lower threshold
                 if not results:
                     results = store.search_vector_with_teams(user_id, emb, top_k=search_limit,
                                                   min_score=0.15, query_text=req.query,
                                                   graph_depth=req.graph_depth,
-                                                  sub_user_id=sub_uid)
+                                                  sub_user_id=sub_uid, meta_filters=meta_filters)
         else:
             results = store.search_text(user_id, req.query, top_k=search_limit, sub_user_id=sub_uid)
 
@@ -3779,8 +3791,19 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         import hashlib as _hashlib
 
         sub_uid = req.user_id or "default"
+
+        # Build metadata filters
+        meta_filters = dict(req.filters) if req.filters else {}
+        if req.agent_id:
+            meta_filters["agent_id"] = req.agent_id
+        if req.run_id:
+            meta_filters["run_id"] = req.run_id
+        if req.app_id:
+            meta_filters["app_id"] = req.app_id
+
         # ---- Redis cache ----
-        cache_key = f"searchall:{user_id}:{sub_uid}:{_hashlib.md5(f'{req.query}:{req.limit}:{req.graph_depth}'.encode()).hexdigest()}"
+        filter_str = json.dumps(meta_filters, sort_keys=True) if meta_filters else ""
+        cache_key = f"searchall:{user_id}:{sub_uid}:{_hashlib.md5(f'{req.query}:{req.limit}:{req.graph_depth}:{filter_str}'.encode()).hexdigest()}"
         cached = store.cache.get(cache_key)
         if cached:
             store.log_usage(user_id, "search_all")
@@ -3802,11 +3825,11 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         if emb is not None:
             semantic = store.search_vector_with_teams(
                 user_id, emb, top_k=search_limit, query_text=req.query,
-                graph_depth=req.graph_depth, sub_user_id=sub_uid)
+                graph_depth=req.graph_depth, sub_user_id=sub_uid, meta_filters=meta_filters)
             if not semantic:
                 semantic = store.search_vector_with_teams(
                     user_id, emb, top_k=search_limit, min_score=0.15,
-                    query_text=req.query, graph_depth=req.graph_depth, sub_user_id=sub_uid)
+                    query_text=req.query, graph_depth=req.graph_depth, sub_user_id=sub_uid, meta_filters=meta_filters)
             # Episodic
             episodic = store.search_episodes_vector(
                 user_id, emb, top_k=ep_limit, sub_user_id=sub_uid)

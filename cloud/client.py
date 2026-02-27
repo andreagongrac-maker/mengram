@@ -173,7 +173,8 @@ class CloudMemory:
     def search(self, query: str, user_id: str = "default",
                limit: int = 5, agent_id: str = None,
                run_id: str = None, app_id: str = None,
-               graph_depth: int = 2) -> list[dict]:
+               graph_depth: int = 2,
+               filters: dict = None) -> list[dict]:
         """
         Semantic search across memories.
 
@@ -185,6 +186,7 @@ class CloudMemory:
             run_id: Filter by run/session
             app_id: Filter by application
             graph_depth: How many hops to traverse in the knowledge graph (default: 2)
+            filters: Metadata filters, e.g. {"agent_id": "support-bot", "app_id": "prod"}
 
         Returns:
             [{"entity": "...", "type": "...", "score": 0.85, "facts": [...], "knowledge": [...]}]
@@ -197,6 +199,8 @@ class CloudMemory:
             body["run_id"] = run_id
         if app_id:
             body["app_id"] = app_id
+        if filters:
+            body["filters"] = filters
         result = self._request("POST", "/v1/search", body)
         return result.get("results", [])
 

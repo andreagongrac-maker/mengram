@@ -1828,10 +1828,11 @@ class CloudStore:
                       top_k: int = 5, min_score: float = 0.2,
                       query_text: str = "",
                       graph_depth: int = 2,
-                      sub_user_id: str = "default") -> list[dict]:
+                      sub_user_id: str = "default",
+                      meta_filters: dict = None) -> list[dict]:
         """
         Hybrid search: vector + BM25 text + graph expansion.
-        
+
         Pipeline:
         1. Vector search (semantic similarity via pgvector)
         2. BM25 text search (exact keyword match via tsvector)
@@ -1841,11 +1842,18 @@ class CloudStore:
         """
         embedding_str = f"[{','.join(str(x) for x in embedding)}]"
 
+        # Build metadata filter clause
+        meta_clause = ""
+        meta_params = []
+        if meta_filters:
+            meta_clause = " AND e.metadata @> %s::jsonb"
+            meta_params = [json.dumps(meta_filters)]
+
         with self._cursor(dict_cursor=True) as cur:
 
             # ========== STAGE 1: Vector search ==========
             cur.execute(
-                """SELECT DISTINCT ON (e.id)
+                f"""SELECT DISTINCT ON (e.id)
                        e.id, e.name, e.type,
                        1 - (emb.embedding <=> %s::vector) AS score,
                        e.updated_at
@@ -1853,8 +1861,9 @@ class CloudStore:
                    JOIN entities e ON e.id = emb.entity_id
                    WHERE e.user_id = %s AND e.sub_user_id = %s
                      AND 1 - (emb.embedding <=> %s::vector) > %s
+                     {meta_clause}
                    ORDER BY e.id, score DESC""",
-                (embedding_str, user_id, sub_user_id, embedding_str, min_score)
+                (embedding_str, user_id, sub_user_id, embedding_str, min_score, *meta_params)
             )
             vector_rows = cur.fetchall()
             # Rank by score
@@ -1869,7 +1878,7 @@ class CloudStore:
                 if words:
                     # Use plainto_tsquery for robustness (handles any language)
                     cur.execute(
-                        """SELECT DISTINCT ON (e.id)
+                        f"""SELECT DISTINCT ON (e.id)
                                e.id, e.name, e.type,
                                ts_rank(emb.tsv, plainto_tsquery('english', %s)) AS rank,
                                e.updated_at
@@ -1877,8 +1886,9 @@ class CloudStore:
                            JOIN entities e ON e.id = emb.entity_id
                            WHERE e.user_id = %s AND e.sub_user_id = %s
                              AND emb.tsv @@ plainto_tsquery('english', %s)
+                             {meta_clause}
                            ORDER BY e.id, rank DESC""",
-                        (query_text, user_id, sub_user_id, query_text)
+                        (query_text, user_id, sub_user_id, query_text, *meta_params)
                     )
                     bm25_rows = cur.fetchall()
                     bm25_rows.sort(key=lambda r: float(r["rank"]), reverse=True)
@@ -4622,7 +4632,8 @@ Be specific and personal, not generic. No markdown, just JSON."""
                                   top_k: int = 5, min_score: float = 0.3,
                                   query_text: str = "",
                                   graph_depth: int = 2,
-                                  sub_user_id: str = "default") -> list[dict]:
+                                  sub_user_id: str = "default",
+                                  meta_filters: dict = None) -> list[dict]:
         """
         Same as search_vector but includes shared team memories.
         Results from team entities are marked with team_shared=True.
@@ -4632,14 +4643,21 @@ Be specific and personal, not generic. No markdown, just JSON."""
 
         if not team_ids:
             # No teams — use normal search
-            return self.search_vector(user_id, embedding, top_k, min_score, query_text, graph_depth, sub_user_id=sub_user_id)
+            return self.search_vector(user_id, embedding, top_k, min_score, query_text, graph_depth, sub_user_id=sub_user_id, meta_filters=meta_filters)
 
         embedding_str = f"[{','.join(str(x) for x in embedding)}]"
+
+        # Build metadata filter clause
+        meta_clause = ""
+        meta_params = []
+        if meta_filters:
+            meta_clause = " AND e.metadata @> %s::jsonb"
+            meta_params = [json.dumps(meta_filters)]
 
         with self._cursor(dict_cursor=True) as cur:
             # Vector search: personal + team entities
             cur.execute(
-                """SELECT DISTINCT ON (e.id)
+                f"""SELECT DISTINCT ON (e.id)
                        e.id, e.name, e.type, e.user_id, e.team_id,
                        1 - (emb.embedding <=> %s::vector) AS score,
                        e.updated_at
@@ -4647,8 +4665,9 @@ Be specific and personal, not generic. No markdown, just JSON."""
                    JOIN entities e ON e.id = emb.entity_id
                    WHERE ((e.user_id = %s AND e.sub_user_id = %s) OR e.team_id = ANY(%s))
                      AND 1 - (emb.embedding <=> %s::vector) > %s
+                     {meta_clause}
                    ORDER BY e.id, score DESC""",
-                (embedding_str, user_id, sub_user_id, team_ids, embedding_str, min_score)
+                (embedding_str, user_id, sub_user_id, team_ids, embedding_str, min_score, *meta_params)
             )
             vector_rows = cur.fetchall()
             vector_rows.sort(key=lambda r: float(r["score"]), reverse=True)
@@ -4660,7 +4679,7 @@ Be specific and personal, not generic. No markdown, just JSON."""
                 words = [w.strip() for w in query_text.split() if len(w.strip()) >= 2]
                 if words:
                     cur.execute(
-                        """SELECT DISTINCT ON (e.id)
+                        f"""SELECT DISTINCT ON (e.id)
                                e.id, e.name, e.type, e.user_id, e.team_id,
                                ts_rank(emb.tsv, plainto_tsquery('english', %s)) AS rank,
                                e.updated_at
@@ -4668,8 +4687,9 @@ Be specific and personal, not generic. No markdown, just JSON."""
                            JOIN entities e ON e.id = emb.entity_id
                            WHERE ((e.user_id = %s AND e.sub_user_id = %s) OR e.team_id = ANY(%s))
                              AND emb.tsv @@ plainto_tsquery('english', %s)
+                             {meta_clause}
                            ORDER BY e.id, rank DESC""",
-                        (query_text, user_id, sub_user_id, team_ids, query_text)
+                        (query_text, user_id, sub_user_id, team_ids, query_text, *meta_params)
                     )
                     bm25_rows = cur.fetchall()
                     bm25_rows.sort(key=lambda r: float(r["rank"]), reverse=True)
