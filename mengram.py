@@ -400,6 +400,35 @@ def Mengram(api_key: Optional[str] = None, base_url: str = "https://mengram.io")
     return CloudMemory(api_key=key, base_url=base_url)
 
 
+def AsyncMengram(api_key: Optional[str] = None, base_url: str = "https://mengram.io"):
+    """
+    Create an async Mengram cloud client. Requires httpx.
+
+    Args:
+        api_key: API key (starts with 'om-'). Falls back to MENGRAM_API_KEY env var.
+        base_url: API base URL.
+
+    Returns:
+        AsyncCloudMemory instance. Use as async context manager or call .close().
+
+    Example:
+        from mengram import AsyncMengram
+
+        async with AsyncMengram() as m:
+            await m.add([{"role": "user", "content": "Deployed on Railway"}])
+            results = await m.search("deployment")
+    """
+    from cloud.async_client import AsyncCloudMemory
+
+    key = api_key or os.environ.get("MENGRAM_API_KEY")
+    if not key:
+        raise ValueError(
+            "API key required. Pass api_key= or set MENGRAM_API_KEY env var. "
+            "Get your key at https://mengram.io"
+        )
+    return AsyncCloudMemory(api_key=key, base_url=base_url)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("🧠 Mengram SDK — Demo")
