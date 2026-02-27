@@ -589,7 +589,7 @@ Be strict — only include entities that directly answer or relate to the query.
                 <hr style="border:none;border-top:1px solid #1a1a2e;margin:28px 0">
                 <p style="font-size:12px;color:#55556a;text-align:center">
                     <a href="https://mengram.io/dashboard" style="color:#7c3aed;text-decoration:none">Console</a> ·
-                    <a href="https://mengram.io/docs" style="color:#7c3aed;text-decoration:none">Docs</a> ·
+                    <a href="https://docs.mengram.io" style="color:#7c3aed;text-decoration:none">Docs</a> ·
                     <a href="https://github.com/alibaizhanov/mengram" style="color:#7c3aed;text-decoration:none">GitHub</a>
                 </p>
             </div>
@@ -663,21 +663,6 @@ Be strict — only include entities that directly answer or relate to the query.
             # Core — highest priority
             ("https://mengram.io", "1.0", "weekly"),
             ("https://mengram.io/pricing", "0.8", "monthly"),
-            # Docs — high priority, key for dev discovery
-            ("https://mengram.io/docs", "0.9", "weekly"),
-            ("https://mengram.io/docs/quickstart", "0.9", "weekly"),
-            ("https://mengram.io/docs/python-sdk", "0.8", "weekly"),
-            ("https://mengram.io/docs/javascript-sdk", "0.8", "weekly"),
-            ("https://mengram.io/docs/async-client", "0.7", "monthly"),
-            ("https://mengram.io/docs/api-reference", "0.8", "weekly"),
-            ("https://mengram.io/docs/memory-types", "0.8", "monthly"),
-            ("https://mengram.io/docs/cognitive-profile", "0.7", "monthly"),
-            ("https://mengram.io/docs/search-filters", "0.7", "monthly"),
-            ("https://mengram.io/docs/webhooks", "0.7", "monthly"),
-            ("https://mengram.io/docs/langchain", "0.8", "weekly"),
-            ("https://mengram.io/docs/crewai", "0.8", "weekly"),
-            ("https://mengram.io/docs/mcp", "0.8", "weekly"),
-            ("https://mengram.io/docs/n8n", "0.8", "weekly"),
             # VS comparison — high SEO value
             ("https://mengram.io/vs/mem0", "0.9", "weekly"),
             ("https://mengram.io/vs/zep", "0.8", "weekly"),
@@ -2193,7 +2178,7 @@ entity = m.get("PostgreSQL")     # get specific entity
 m.delete("PostgreSQL")           # delete entity</code></pre>
 
 <h3>get_profile(...)</h3>
-<p>Generate a Cognitive Profile. See <a href="/docs/cognitive-profile">Cognitive Profile docs</a>.</p>
+<p>Generate a Cognitive Profile. See <a href="https://docs.mengram.io/cognitive-profile">Cognitive Profile docs</a>.</p>
 
 <h3>episodes(...)</h3>
 <p>Search or list episodic memories.</p>
@@ -2613,7 +2598,7 @@ curl -X POST http://localhost:5678/webhook/chat \\
 <h2>Links</h2>
 <ul>
 <li><a href="https://github.com/alibaizhanov/mengram/tree/main/examples/n8n" target="_blank">Workflow on GitHub</a></li>
-<li><a href="/docs/api-reference">API Reference</a></li>
+<li><a href="https://docs.mengram.io/api-reference">API Reference</a></li>
 </ul>
 """,
         },
@@ -2852,22 +2837,15 @@ m.delete_webhook(webhook_id=1)</code></pre>
         },
     }
 
-    @app.get("/docs", response_class=HTMLResponse)
+    @app.get("/docs", response_class=RedirectResponse)
     async def docs_index():
-        """Documentation landing page."""
-        template_path = Path(__file__).parent / "docs-index.html"
-        return template_path.read_text(encoding="utf-8")
+        """Redirect to Mintlify docs."""
+        return RedirectResponse("https://docs.mengram.io", status_code=301)
 
-    @app.get("/docs/{slug}", response_class=HTMLResponse)
+    @app.get("/docs/{slug}", response_class=RedirectResponse)
     async def docs_page(slug: str):
-        """Documentation page."""
-        data = DOCS_PAGES.get(slug)
-        if not data:
-            raise HTTPException(404, "Documentation page not found")
-        template_path = Path(__file__).parent / "docs.html"
-        html = template_path.read_text(encoding="utf-8")
-        sidebar_html = _build_sidebar(slug)
-        return html.format(**data, sidebar_html=sidebar_html, slug=slug)
+        """Redirect to Mintlify docs."""
+        return RedirectResponse(f"https://docs.mengram.io/{slug}", status_code=301)
 
     @app.get("/extension/download")
     async def download_extension():
@@ -5357,7 +5335,7 @@ def main():
 
     logger.info(f"🧠 Mengram Cloud API")
     logger.info(f"   http://0.0.0.0:{port}")
-    logger.info(f"   Docs: http://localhost:{port}/docs")
+    logger.info(f"   Docs: https://docs.mengram.io")
     logger.info(f"   Swagger: http://localhost:{port}/swagger")
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
