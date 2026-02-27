@@ -68,9 +68,9 @@ class MengramRetriever(BaseRetriever):
 
     @model_validator(mode="after")
     def _init_client(self) -> "MengramRetriever":
-        from cloud.client import CloudMemory
+        from mengram import Mengram
 
-        self._client = CloudMemory(api_key=self.api_key, base_url=self.api_url)
+        self._client = Mengram(api_key=self.api_key, base_url=self.api_url)
         return self
 
     def _get_relevant_documents(

@@ -1,30 +1,19 @@
 """
-Mengram SDK — Mem0-compatible API with Knowledge Graph.
+Mengram SDK — AI memory for LLMs and AI agents.
 
-Usage:
+Cloud usage:
+    from mengram import Mengram
+
+    m = Mengram(api_key="om-...")  # or set MENGRAM_API_KEY env var
+    m.add([{"role": "user", "content": "I deployed on Railway"}])
+    results = m.search("deployment")
+
+Local usage:
     from mengram import Memory
 
     m = Memory(vault_path="./vault", llm_provider="anthropic", api_key="sk-ant-...")
-
-    # Remember
-    m.add("I work at Uzum Bank, backend on Spring Boot", user_id="ali")
-
-    # Search
-    results = m.search("where does ali work?", user_id="ali")
-
-    # Everything we know
-    all_memories = m.get_all(user_id="ali")
-
-    # Delete
-    m.delete("PostgreSQL")
-
-    # Stats
-    m.stats()
-
-Differences from Mem0:
-    - Data in .md files (can open in Obsidian)
-    - Knowledge Graph with typed relations
-    - Fully local
+    m.add("I work at Uzum Bank", user_id="ali")
+    m.search("where does ali work?", user_id="ali")
 """
 
 import os
@@ -376,6 +365,39 @@ def init(
         api_key=api_key,
         model=model,
     )
+
+
+# ==========================================
+# Cloud client (public API)
+# ==========================================
+
+def Mengram(api_key: Optional[str] = None, base_url: str = "https://mengram.io"):
+    """
+    Create a Mengram cloud client.
+
+    Args:
+        api_key: API key (starts with 'om-'). Falls back to MENGRAM_API_KEY env var.
+        base_url: API base URL.
+
+    Returns:
+        CloudMemory instance.
+
+    Example:
+        from mengram import Mengram
+
+        m = Mengram()  # uses MENGRAM_API_KEY env var
+        m.add([{"role": "user", "content": "I deployed on Railway"}])
+        results = m.search("deployment")
+    """
+    from cloud.client import CloudMemory
+
+    key = api_key or os.environ.get("MENGRAM_API_KEY")
+    if not key:
+        raise ValueError(
+            "API key required. Pass api_key= or set MENGRAM_API_KEY env var. "
+            "Get your key at https://mengram.io"
+        )
+    return CloudMemory(api_key=key, base_url=base_url)
 
 
 if __name__ == "__main__":
