@@ -5208,7 +5208,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             "serverInfo": {
                 "name": "mengram",
                 "title": "Mengram — AI Memory Layer",
-                "version": "2.15.0",
+                "version": "2.15.1",
                 "description": "Give AI agents memory that actually learns. 3 memory types: semantic (facts & preferences), episodic (events & decisions), and procedural (workflows that evolve from failures). Cognitive Profile, Smart Triggers, Memory Agents, Knowledge Graph. Free cloud API.",
                 "homepage": "https://mengram.io",
                 "icon": "https://mengram.io/static/icon-512.png",
