@@ -198,7 +198,7 @@ results = m.search_all("deployment")  # semantic + episodic + procedural
 profile = m.get_profile()             # instant system prompt
 ```
         """,
-        version="2.15.0",
+        version="2.15.1",
         docs_url="/swagger",
         redoc_url="/redoc",
         openapi_tags=[
