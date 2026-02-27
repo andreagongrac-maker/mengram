@@ -4255,25 +4255,43 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         """Run memory agents.
         ?agent=curator|connector|digest|all
         ?auto_fix=true — auto-archive low quality and stale facts (curator only)
+        Returns a job_id immediately; agents run in the background.
         """
         user_id = ctx.user_id
         use_quota(ctx, "agent")  # atomic check+increment
-        llm = get_llm()
 
-        if agent == "all":
-            result = store.run_all_agents(user_id, llm.llm, auto_fix=auto_fix, sub_user_id=sub_user_id)
-            return {"status": "completed", "agents": result}
-        elif agent == "curator":
-            result = store.run_curator_agent(user_id, llm.llm, auto_fix=auto_fix, sub_user_id=sub_user_id)
-            return {"status": "completed", "agent": "curator", "result": result}
-        elif agent == "connector":
-            result = store.run_connector_agent(user_id, llm.llm, sub_user_id=sub_user_id)
-            return {"status": "completed", "agent": "connector", "result": result}
-        elif agent == "digest":
-            result = store.run_digest_agent(user_id, llm.llm, sub_user_id=sub_user_id)
-            return {"status": "completed", "agent": "digest", "result": result}
-        else:
+        if agent not in ("all", "curator", "connector", "digest"):
             raise HTTPException(status_code=400, detail=f"Unknown agent: {agent}. Use: curator, connector, digest, all")
+
+        job_id = store.create_job(user_id, f"agents_{agent}")
+
+        def run_agents_background():
+            try:
+                llm = get_llm()
+                if agent == "all":
+                    result = store.run_all_agents(user_id, llm.llm, auto_fix=auto_fix, sub_user_id=sub_user_id)
+                    store.complete_job(job_id, {"agents": result})
+                elif agent == "curator":
+                    result = store.run_curator_agent(user_id, llm.llm, auto_fix=auto_fix, sub_user_id=sub_user_id)
+                    store.complete_job(job_id, {"agent": "curator", "result": result})
+                elif agent == "connector":
+                    result = store.run_connector_agent(user_id, llm.llm, sub_user_id=sub_user_id)
+                    store.complete_job(job_id, {"agent": "connector", "result": result})
+                elif agent == "digest":
+                    result = store.run_digest_agent(user_id, llm.llm, sub_user_id=sub_user_id)
+                    store.complete_job(job_id, {"agent": "digest", "result": result})
+                logger.info(f"✅ Agents ({agent}) completed for {user_id}")
+            except Exception as e:
+                logger.error(f"❌ Agents ({agent}) failed for {user_id}: {e}")
+                store.fail_job(job_id, str(e))
+
+        threading.Thread(target=run_agents_background, daemon=True).start()
+
+        return {
+            "status": "accepted",
+            "message": f"Agent(s) '{agent}' running in background.",
+            "job_id": job_id,
+        }
 
     @app.get("/v1/agents/history", tags=["Agents"])
     async def agent_history(
