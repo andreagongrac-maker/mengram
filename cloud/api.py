@@ -3897,11 +3897,12 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
         threading.Thread(target=process_in_background, daemon=True).start()
 
-        return {
+        from starlette.responses import JSONResponse
+        return JSONResponse(status_code=202, content={
             "status": "accepted",
             "message": "Processing in background. Memories will appear shortly.",
             "job_id": job_id,
-        }
+        })
 
     @app.post("/v1/add_text", tags=["Memory"])
     async def add_text(req: AddTextRequest, ctx: AuthContext = Depends(auth)):
@@ -4287,11 +4288,12 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
         threading.Thread(target=run_agents_background, daemon=True).start()
 
-        return {
+        from starlette.responses import JSONResponse
+        return JSONResponse(status_code=202, content={
             "status": "accepted",
             "message": f"Agent(s) '{agent}' running in background.",
             "job_id": job_id,
-        }
+        })
 
     @app.get("/v1/agents/history", tags=["Agents"])
     async def agent_history(
