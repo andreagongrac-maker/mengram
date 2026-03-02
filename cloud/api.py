@@ -633,6 +633,118 @@ Be strict — only include entities that directly answer or relate to the query.
         except Exception as e:
             logger.error(f"⚠️  Verification email failed: {e}")
 
+    def _send_drip_email(email: str, drip_type: str, code: str = None):
+        """Send an onboarding drip email."""
+        resend_key = os.environ.get("RESEND_API_KEY")
+        if not resend_key:
+            return
+        try:
+            import resend
+            resend.api_key = resend_key
+
+            # Common email wrapper
+            def _wrap(subject: str, body_html: str):
+                return f"""
+                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:40px 24px;color:#e8e8f0;background:#0a0a12;border-radius:16px">
+                    <div style="text-align:center;margin-bottom:32px">
+                        <svg width="36" height="36" viewBox="0 0 120 120"><path d="M60 16 Q92 16 96 48 Q100 78 72 88 Q50 96 38 76 Q26 58 46 46 Q62 38 70 52 Q76 64 62 68" fill="none" stroke="#a855f7" stroke-width="8" stroke-linecap="round"/><circle cx="62" cy="68" r="8" fill="#a855f7"/><circle cx="62" cy="68" r="3.5" fill="white"/></svg>
+                        <h1 style="font-size:22px;font-weight:700;margin:8px 0 4px;color:#e8e8f0">Mengram</h1>
+                    </div>
+                    {body_html}
+                    <hr style="border:none;border-top:1px solid #1a1a2e;margin:28px 0">
+                    <p style="font-size:12px;color:#55556a;text-align:center">
+                        <a href="https://mengram.io/dashboard" style="color:#7c3aed;text-decoration:none">Console</a> &middot;
+                        <a href="https://docs.mengram.io" style="color:#7c3aed;text-decoration:none">Docs</a> &middot;
+                        <a href="https://github.com/alibaizhanov/mengram" style="color:#7c3aed;text-decoration:none">GitHub</a>
+                    </p>
+                </div>"""
+
+            if drip_type == "completed_24h":
+                subject = "Quick start: add your first memory in 30 seconds"
+                body = """
+                    <p style="font-size:15px;color:#c8c8d8;line-height:1.6">You signed up for Mengram — here's the fastest way to get started:</p>
+                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:20px 0">
+                        <code style="font-size:13px;color:#22c55e">pip install mengram-ai</code>
+                    </div>
+                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:12px 0">
+                        <pre style="margin:0;font-size:13px;color:#a78bfa;white-space:pre-wrap"><code>from mengram import Mengram
+m = Mengram("your-api-key")
+m.add("I love hiking in the mountains")</code></pre>
+                    </div>
+                    <p style="font-size:14px;color:#8888a8">That's it — 3 lines to give your AI persistent memory.</p>
+                    <div style="text-align:center;margin:24px 0">
+                        <a href="https://docs.mengram.io/quickstart" style="background:#7c3aed;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Read quickstart guide</a>
+                    </div>"""
+
+            elif drip_type == "completed_72h":
+                subject = "3 ways to use Mengram"
+                body = """
+                    <p style="font-size:15px;color:#c8c8d8;line-height:1.6">Haven't tried Mengram yet? Here are 3 popular ways to get started:</p>
+                    <div style="margin:20px 0">
+                        <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:12px 0">
+                            <p style="color:#a78bfa;font-weight:600;margin:0 0 8px">1. MCP Server — works with Claude, Cursor, Windsurf</p>
+                            <p style="color:#8888a8;font-size:13px;margin:0">Add memory to any AI tool with zero code.</p>
+                        </div>
+                        <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:12px 0">
+                            <p style="color:#a78bfa;font-weight:600;margin:0 0 8px">2. Python / JavaScript SDK</p>
+                            <p style="color:#8888a8;font-size:13px;margin:0">Build apps with persistent AI memory in a few lines.</p>
+                        </div>
+                        <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:12px 0">
+                            <p style="color:#a78bfa;font-weight:600;margin:0 0 8px">3. n8n / REST API</p>
+                            <p style="color:#8888a8;font-size:13px;margin:0">Automate memory with workflows or direct API calls.</p>
+                        </div>
+                    </div>
+                    <div style="text-align:center;margin:24px 0">
+                        <a href="https://docs.mengram.io" style="background:#7c3aed;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Explore docs</a>
+                    </div>"""
+
+            elif drip_type == "completed_7d":
+                subject = "Your memory vault is empty"
+                body = """
+                    <p style="font-size:15px;color:#c8c8d8;line-height:1.6">Your Mengram vault is still empty. Add your first memory and see the magic:</p>
+                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:20px 0">
+                        <p style="color:#a78bfa;font-weight:600;margin:0 0 8px">Try it right now</p>
+                        <pre style="margin:0;font-size:13px;color:#22c55e;white-space:pre-wrap"><code>curl -X POST https://mengram.io/v1/add \\
+  -H "Authorization: Bearer YOUR_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"messages":[{"role":"user","content":"I like coffee"}]}'</code></pre>
+                    </div>
+                    <div style="text-align:center;margin:24px 0">
+                        <a href="https://mengram.io/dashboard" style="background:#7c3aed;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Open dashboard</a>
+                    </div>"""
+
+            elif drip_type == "incomplete_1h":
+                subject = "Your verification code is waiting"
+                body = f"""
+                    <p style="font-size:15px;color:#c8c8d8;line-height:1.6">You started signing up for Mengram but haven't verified your email yet. Here's a fresh code:</p>
+                    <div style="background:#f5f5f7;padding:16px 24px;border-radius:8px;text-align:center;margin:20px 0">
+                        <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#1a1a2e">{code}</span>
+                    </div>
+                    <p style="color:#8888a8;font-size:14px">This code expires in 10 minutes. Enter it at <a href="https://mengram.io/dashboard" style="color:#7c3aed">mengram.io/dashboard</a>.</p>"""
+
+            elif drip_type == "incomplete_24h":
+                subject = "Still want to try Mengram?"
+                body = f"""
+                    <p style="font-size:15px;color:#c8c8d8;line-height:1.6">You signed up for Mengram yesterday but never finished verification. Here's one last code:</p>
+                    <div style="background:#f5f5f7;padding:16px 24px;border-radius:8px;text-align:center;margin:20px 0">
+                        <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#1a1a2e">{code}</span>
+                    </div>
+                    <p style="color:#8888a8;font-size:14px">This code expires in 10 minutes. Enter it at <a href="https://mengram.io/dashboard" style="color:#7c3aed">mengram.io/dashboard</a>.</p>
+                    <p style="color:#55556a;font-size:12px;margin-top:16px">This is the last reminder we'll send.</p>"""
+            else:
+                return
+
+            html = _wrap(subject, body)
+            resend.Emails.send({
+                "from": EMAIL_FROM,
+                "to": [email],
+                "subject": subject,
+                "html": html,
+            })
+            logger.info(f"📧 Drip email '{drip_type}' sent to {email}")
+        except Exception as e:
+            logger.error(f"⚠️ Drip email '{drip_type}' failed for {email}: {e}")
+
     # ---- Public endpoints ----
 
     @app.get("/", response_class=HTMLResponse)
@@ -4955,6 +5067,49 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     _cron_thread = threading.Thread(target=_trigger_cron_loop, daemon=True)
     _cron_thread.start()
     logger.info("🧠 Smart trigger cron started (every 5 min)")
+
+    # ---- Background drip email cron ----
+
+    def _drip_email_cron_loop():
+        """Background thread that sends onboarding drip emails every 30 minutes."""
+        _time.sleep(60)  # Initial delay
+        while True:
+            try:
+                import secrets as _secrets
+
+                # Completed signups with no API activity
+                for user in store.get_inactive_completed_signups(24, "completed_24h"):
+                    if store.try_record_drip(user["email"], "completed_24h", user["id"]):
+                        _send_drip_email(user["email"], "completed_24h")
+
+                for user in store.get_inactive_completed_signups(72, "completed_72h"):
+                    if store.try_record_drip(user["email"], "completed_72h", user["id"]):
+                        _send_drip_email(user["email"], "completed_72h")
+
+                for user in store.get_inactive_completed_signups(168, "completed_7d"):
+                    if store.try_record_drip(user["email"], "completed_7d", user["id"]):
+                        _send_drip_email(user["email"], "completed_7d")
+
+                # Incomplete signups (verification pending)
+                for row in store.get_incomplete_signups_for_drip(1, "incomplete_1h"):
+                    if store.try_record_drip(row["email"], "incomplete_1h"):
+                        code = f"{_secrets.randbelow(900000) + 100000}"
+                        store.save_email_code(row["email"], code)
+                        _send_drip_email(row["email"], "incomplete_1h", code=code)
+
+                for row in store.get_incomplete_signups_for_drip(24, "incomplete_24h"):
+                    if store.try_record_drip(row["email"], "incomplete_24h"):
+                        code = f"{_secrets.randbelow(900000) + 100000}"
+                        store.save_email_code(row["email"], code)
+                        _send_drip_email(row["email"], "incomplete_24h", code=code)
+
+            except Exception as e:
+                logger.error(f"⚠️ Drip email cron error: {e}")
+            _time.sleep(1800)  # Every 30 minutes
+
+    _drip_thread = threading.Thread(target=_drip_email_cron_loop, daemon=True)
+    _drip_thread.start()
+    logger.info("📧 Onboarding drip email cron started (every 30 min)")
 
     # ---- Billing & Subscription ----
 

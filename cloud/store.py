@@ -1114,6 +1114,73 @@ class CloudStore:
                 return True
             return False
 
+    # ---- Drip Emails ----
+
+    def ensure_drip_emails_table(self):
+        """Create drip_emails table if not exists."""
+        with self._cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS drip_emails (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    user_id UUID,
+                    drip_type VARCHAR(30) NOT NULL,
+                    sent_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(email, drip_type)
+                )
+            """)
+
+    def try_record_drip(self, email: str, drip_type: str, user_id: str = None) -> bool:
+        """Record a drip email send. Returns True if recorded (=should send), False if duplicate."""
+        self.ensure_drip_emails_table()
+        with self._cursor() as cur:
+            cur.execute(
+                """INSERT INTO drip_emails (email, user_id, drip_type)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (email, drip_type) DO NOTHING
+                   RETURNING id""",
+                (email, user_id, drip_type)
+            )
+            return cur.fetchone() is not None
+
+    def get_inactive_completed_signups(self, hours: int, drip_type: str) -> list:
+        """Find completed signups with no API activity after N hours."""
+        self.ensure_drip_emails_table()
+        with self._cursor(dict_cursor=True) as cur:
+            cur.execute(
+                """SELECT u.id, u.email
+                   FROM users u
+                   JOIN api_keys ak ON ak.user_id = u.id
+                   WHERE u.created_at < NOW() - make_interval(hours => %s)
+                     AND ak.last_used_at IS NULL
+                     AND ak.is_active = TRUE
+                     AND NOT EXISTS (
+                         SELECT 1 FROM drip_emails de
+                         WHERE de.email = u.email AND de.drip_type = %s
+                     )""",
+                (hours, drip_type)
+            )
+            return [{"id": str(r["id"]), "email": r["email"]} for r in cur.fetchall()]
+
+    def get_incomplete_signups_for_drip(self, hours: int, drip_type: str) -> list:
+        """Find incomplete signups (pending verification) after N hours."""
+        self.ensure_drip_emails_table()
+        with self._cursor(dict_cursor=True) as cur:
+            cur.execute(
+                """SELECT ec.email
+                   FROM email_codes ec
+                   WHERE ec.created_at < NOW() - make_interval(hours => %s)
+                     AND NOT EXISTS (
+                         SELECT 1 FROM users u WHERE u.email = ec.email
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM drip_emails de
+                         WHERE de.email = ec.email AND de.drip_type = %s
+                     )""",
+                (hours, drip_type)
+            )
+            return [{"email": r["email"]} for r in cur.fetchall()]
+
     def save_oauth_code(self, code: str, user_id: str, redirect_uri: str, state: str):
         """Save OAuth authorization code (expires in 5 min)."""
         with self._cursor() as cur:
