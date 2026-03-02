@@ -1144,7 +1144,8 @@ class CloudStore:
             return cur.fetchone() is not None
 
     def get_inactive_completed_signups(self, hours: int, drip_type: str) -> list:
-        """Find completed signups with no API activity after N hours."""
+        """Find completed signups with no API activity after N hours.
+        Only considers users who signed up within the last 30 days."""
         self.ensure_drip_emails_table()
         with self._cursor(dict_cursor=True) as cur:
             cur.execute(
@@ -1152,6 +1153,7 @@ class CloudStore:
                    FROM users u
                    JOIN api_keys ak ON ak.user_id = u.id
                    WHERE u.created_at < NOW() - make_interval(hours => %s)
+                     AND u.created_at > NOW() - INTERVAL '30 days'
                      AND ak.last_used_at IS NULL
                      AND ak.is_active = TRUE
                      AND NOT EXISTS (
@@ -1163,13 +1165,15 @@ class CloudStore:
             return [{"id": str(r["id"]), "email": r["email"]} for r in cur.fetchall()]
 
     def get_incomplete_signups_for_drip(self, hours: int, drip_type: str) -> list:
-        """Find incomplete signups (pending verification) after N hours."""
+        """Find incomplete signups (pending verification) after N hours.
+        Only considers codes created within the last 7 days to avoid spamming old entries."""
         self.ensure_drip_emails_table()
         with self._cursor(dict_cursor=True) as cur:
             cur.execute(
                 """SELECT ec.email
                    FROM email_codes ec
                    WHERE ec.created_at < NOW() - make_interval(hours => %s)
+                     AND ec.created_at > NOW() - INTERVAL '7 days'
                      AND NOT EXISTS (
                          SELECT 1 FROM users u WHERE u.email = ec.email
                      )
