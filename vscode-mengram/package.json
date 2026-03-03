@@ -1,0 +1,117 @@
+{
+  "name": "mengram",
+  "displayName": "Mengram",
+  "description": "AI memory for developers — search and save knowledge from VS Code",
+  "version": "0.1.0",
+  "publisher": "mengram",
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Machine Learning", "Other"],
+  "keywords": ["memory", "AI", "knowledge", "mengram", "search", "context"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alibaizhanov/vscode-mengram"
+  },
+  "homepage": "https://mengram.io",
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mengram-sidebar",
+          "title": "Mengram",
+          "icon": "resources/mengram-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mengram-sidebar": [
+        {
+          "type": "webview",
+          "id": "mengram.panel",
+          "name": "Mengram"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "mengram.setApiKey",
+        "title": "Set API key",
+        "category": "Mengram"
+      },
+      {
+        "command": "mengram.searchMemories",
+        "title": "Search memories",
+        "category": "Mengram"
+      },
+      {
+        "command": "mengram.saveSelection",
+        "title": "Save to Mengram",
+        "category": "Mengram"
+      },
+      {
+        "command": "mengram.saveFile",
+        "title": "Save current file",
+        "category": "Mengram"
+      },
+      {
+        "command": "mengram.showStats",
+        "title": "Show stats",
+        "category": "Mengram"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "mengram.saveSelection",
+          "when": "editorHasSelection",
+          "group": "1_modification@100"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Mengram",
+      "properties": {
+        "mengram.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Fallback API key. Prefer using 'Mengram: Set API key' command for secure storage.",
+          "order": 1
+        },
+        "mengram.baseUrl": {
+          "type": "string",
+          "default": "https://mengram.io",
+          "description": "API base URL. Only change for self-hosted instances.",
+          "order": 2
+        },
+        "mengram.userId": {
+          "type": "string",
+          "default": "default",
+          "description": "User ID for memory isolation.",
+          "order": 3
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "npm run check-types && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run check-types && node esbuild.js --production",
+    "vscode:prepublish": "npm run package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.24.0",
+    "mengram-ai": "^2.15.0",
+    "typescript": "^5.4.0"
+  }
+}
