@@ -81,15 +81,20 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
             if not procs:
                 return "No learned procedures yet."
 
+            evolved_count = sum(1 for p in procs if p.get("version", 1) > 1)
             lines = ["# Active Procedures\n"]
+            if evolved_count:
+                lines.append(f"*{evolved_count} procedure(s) have evolved through experience.*\n")
+
             for p in procs:
                 v = p.get("version", 1)
                 sc = p.get("success_count", 0)
                 fc = p.get("fail_count", 0)
                 total = sc + fc
                 reliability = f"{int(sc / total * 100)}%" if total > 0 else "untested"
+                evolved_tag = f" [evolved x{v-1}]" if v > 1 else ""
 
-                lines.append(f"## {p['name']} (v{v}, {reliability} reliable)")
+                lines.append(f"## {p['name']} (v{v}, {reliability} reliable){evolved_tag}")
                 lines.append(f"ID: `{p['id']}`")
                 if p.get("trigger_condition"):
                     lines.append(f"**When:** {p['trigger_condition']}")
@@ -145,19 +150,36 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
         except Exception as e:
             return f"Error loading triggers: {e}"
 
+    def _get_recent():
+        """Get the 5 most recently saved facts."""
+        try:
+            feed_data = mem.feed(limit=5, user_id=user_id)
+            if not feed_data:
+                return "No recent saves."
+
+            lines = ["# Recently Saved\n"]
+            lines.append("*Check this before saving to avoid duplicates.*\n")
+            for item in feed_data:
+                entity = item.get("entity", "?")
+                fact = item.get("fact", item.get("detail", "?"))
+                ts = item.get("created_at", "")[:16] if item.get("created_at") else ""
+                lines.append(f"- **{entity}**: {fact}")
+                if ts:
+                    lines.append(f"  *Saved: {ts}*")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error loading recent saves: {e}"
+
     profile = _get_profile()
     instructions = (
         "YOU HAVE A PERSISTENT CLOUD MEMORY SYSTEM (Mengram).\n"
         "THIS IS YOUR PRIMARY AND ONLY SOURCE OF TRUTH ABOUT THE USER.\n\n"
         "CRITICAL RULES:\n"
-        "1. ALWAYS use 'recall' tool FIRST before answering ANY personal question.\n"
+        "1. ALWAYS use 'recall' or 'context_for' FIRST before answering ANY personal question.\n"
         "2. Use SPECIFIC queries: names ('Ali'), projects ('Mengram'), tech ('Redis').\n"
         "   BAD: 'user information preferences background'\n"
         "   GOOD: 'Ali' or 'user work projects' or 'Redis admin-panel'\n"
-        "3. For broad questions ('what do you know about me'), make 2-3 recall calls:\n"
-        "   - recall('Ali')\n"
-        "   - recall('projects work')\n"
-        "   - recall('technologies stack')\n"
+        "3. For broad questions ('what do you know about me'), make 2-3 recall calls.\n"
         "4. AUTOMATICALLY call 'remember' when the user shares:\n"
         "   - Personal info (name, job, preferences, location)\n"
         "   - Technical decisions or solutions\n"
@@ -165,7 +187,13 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
         "   - Colleagues, companies, or important relationships\n"
         "   - Problems solved or lessons learned\n"
         "   Do NOT ask permission — just save it silently.\n"
-        "5. Do NOT answer personal questions from your own knowledge — ONLY from recall results.\n\n"
+        "5. Use 'checkpoint' at natural breakpoints:\n"
+        "   - After solving a problem or completing a task\n"
+        "   - After making an important decision\n"
+        "   - At the end of a focused conversation\n"
+        "6. Use 'context_for' at the START of a new task to load relevant background.\n"
+        "7. Check memory://recent before saving to AVOID duplicates.\n"
+        "8. Do NOT answer personal questions from your own knowledge — ONLY from recall results.\n\n"
         f"{profile}"
     )
 
@@ -194,6 +222,12 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
                 description="Smart triggers: reminders, contradictions, and patterns detected in memory. Surface these proactively.",
                 mimeType="text/markdown",
             ),
+            Resource(
+                uri="memory://recent",
+                name="Recently Saved",
+                description="Last 5 facts saved to memory — check this before saving to avoid duplicates.",
+                mimeType="text/markdown",
+            ),
         ]
 
     @server.list_resource_templates()
@@ -219,6 +253,9 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
 
         elif uri_str == "memory://triggers":
             return _get_triggers()
+
+        elif uri_str == "memory://recent":
+            return _get_recent()
 
         elif uri_str.startswith("memory://entity/"):
             entity_name = unquote(uri_str.replace("memory://entity/", ""))
@@ -562,6 +599,58 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
                     },
                 },
             ),
+            Tool(
+                name="checkpoint",
+                description="Save a session checkpoint — summarize key decisions, learnings, and outcomes from this conversation. Lighter than 'remember': takes a structured summary instead of raw messages. Call at natural breakpoints: end of a task, after solving a bug, after making a decision.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "summary": {"type": "string", "description": "Brief summary of what was accomplished or decided (1-3 sentences)"},
+                        "decisions": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Key decisions made (e.g. 'Chose PostgreSQL over MongoDB')",
+                        },
+                        "learnings": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Things learned or discovered (e.g. 'pgvector requires extension install')",
+                        },
+                        "next_steps": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "What needs to happen next (saved as reminders)",
+                        },
+                    },
+                    "required": ["summary"],
+                },
+            ),
+            Tool(
+                name="context_for",
+                description="Get relevant memory context for a specific task. Returns a compact context pack: related entities, procedures, and past events. Use at the START of a new task to load relevant background. More focused than 'recall' — returns structured context, not search results.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "Description of the task (e.g. 'deploy API to Railway', 'fix database connection pool issue')"},
+                    },
+                    "required": ["task"],
+                },
+            ),
+            Tool(
+                name="generate_rules_file",
+                description="Generate a CLAUDE.md, .cursorrules, or .windsurfrules file from memory. Creates structured project rules, conventions, tech stack, workflows, and known issues — perfect for AI coding assistants. Output can be saved directly to a file.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "format": {
+                            "type": "string",
+                            "enum": ["claude_md", "cursorrules", "windsurf"],
+                            "default": "claude_md",
+                            "description": "Output format: claude_md (Claude Code), cursorrules (Cursor), windsurf (Windsurf)",
+                        },
+                    },
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -719,10 +808,16 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
                     v = p.get("version", 1)
                     sc = p.get("success_count", 0)
                     fc = p.get("fail_count", 0)
-                    lines.append(f"### {p['name']} (v{v}) — ✅{sc} ❌{fc}")
+                    total = sc + fc
+                    reliability = f"{int(sc / total * 100)}%" if total > 0 else "untested"
+                    evolved_tag = f" [evolved x{v-1}]" if v > 1 else ""
+
+                    lines.append(f"### {p['name']} (v{v}, {reliability}){evolved_tag}")
                     lines.append(f"ID: `{p['id']}`")
                     if p.get("trigger_condition"):
                         lines.append(f"When: {p['trigger_condition']}")
+                    if total > 0:
+                        lines.append(f"Stats: {sc} successes, {fc} failures")
                     for s in p.get("steps", []):
                         lines.append(f"  {s.get('step', '?')}. {s.get('action', '')} — {s.get('detail', '')}")
                     lines.append("")
@@ -739,11 +834,32 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
                     context=context, failed_at_step=failed_at_step,
                     user_id=user_id)
 
+                sc = result.get("success_count", 0)
+                fc = result.get("fail_count", 0)
+                total = sc + fc
+                reliability = f"{int(sc / total * 100)}%" if total > 0 else "untested"
+
                 if success:
-                    text = f"✅ Recorded success for '{result.get('name', '?')}' (total: {result.get('success_count', 0)} successes)"
+                    text = (
+                        f"✅ Recorded success for **{result.get('name', '?')}**\n"
+                        f"Stats: {sc} successes, {fc} failures ({reliability} reliable)\n"
+                        f"Version: v{result.get('version', 1)}"
+                    )
                 else:
-                    evo = "🔄 Evolution triggered — procedure will improve automatically!" if result.get("evolution_triggered") else ""
-                    text = f"❌ Recorded failure for '{result.get('name', '?')}' (total: {result.get('fail_count', 0)} failures)\n{evo}"
+                    evo_lines = [
+                        f"❌ Recorded failure for **{result.get('name', '?')}**",
+                        f"Stats: {sc} successes, {fc} failures ({reliability} reliable)",
+                    ]
+                    if result.get("evolution_triggered"):
+                        evo_lines.append("")
+                        evo_lines.append("🔄 **Evolution triggered** — analyzing failure to create improved version automatically.")
+                        if context:
+                            evo_lines.append(f"Failure context: {context[:200]}")
+                        if failed_at_step:
+                            evo_lines.append(f"Failed at step: {failed_at_step}")
+                        evo_lines.append("")
+                        evo_lines.append("Use `procedure_history` to see the new version once ready.")
+                    text = "\n".join(evo_lines)
                 return [TextContent(type="text", text=text)]
 
             elif name == "procedure_history":
@@ -756,25 +872,47 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
                 if not versions:
                     return [TextContent(type="text", text="Procedure not found.")]
 
-                lines = [f"📜 **{versions[0]['name']}** — {len(versions)} version(s)\n"]
-                for v in versions:
-                    current = " ← current" if v.get("is_current") else ""
-                    lines.append(f"**v{v.get('version', 1)}**{current} — ✅{v.get('success_count', 0)} ❌{v.get('fail_count', 0)}")
-                    for s in v.get("steps", []):
-                        lines.append(f"  {s.get('step', '?')}. {s.get('action', '')}")
-                    lines.append("")
+                # Current version prominently at top
+                current = next((v for v in versions if v.get("is_current")), versions[-1])
+                sc = current.get("success_count", 0)
+                fc = current.get("fail_count", 0)
+                total = sc + fc
+                reliability = f"{int(sc / total * 100)}%" if total > 0 else "untested"
 
+                lines = [f"# {versions[0]['name']} — Evolution History ({len(versions)} versions)\n"]
+                lines.append(f"## Current: v{current.get('version', 1)} ({reliability} reliable, {sc} successes, {fc} failures)")
+                for s in current.get("steps", []):
+                    lines.append(f"  {s.get('step', '?')}. **{s.get('action', '')}** — {s.get('detail', '')}")
+                lines.append("")
+
+                # Evolution timeline with diffs
                 if evolution:
-                    lines.append("**Evolution log:**")
+                    lines.append("---\n## Evolution Timeline\n")
                     for e in evolution:
-                        lines.append(f"- v{e.get('version_before', '?')}→v{e.get('version_after', '?')}: "
-                                    f"{e.get('change_type', '?')} ({e.get('created_at', '')[:10]})")
+                        v_before = e.get("version_before", "?")
+                        v_after = e.get("version_after", "?")
+                        change_type = e.get("change_type", "unknown")
+                        date = e.get("created_at", "")[:10]
                         diff = e.get("diff", {})
-                        for key in ["added", "removed", "modified"]:
-                            items = diff.get(key, [])
-                            if items:
-                                for item in items:
-                                    lines.append(f"  {key}: {item}")
+
+                        lines.append(f"### v{v_before} → v{v_after} ({change_type}) [{date}]")
+                        for item in diff.get("added", []):
+                            lines.append(f"  + {item}")
+                        for item in diff.get("removed", []):
+                            lines.append(f"  - {item}")
+                        for item in diff.get("modified", []):
+                            lines.append(f"  ~ {item}")
+                        lines.append("")
+
+                # All historical versions
+                if len(versions) > 1:
+                    lines.append("---\n## All Versions\n")
+                    for v in versions:
+                        marker = " (CURRENT)" if v.get("is_current") else " (superseded)"
+                        lines.append(f"**v{v.get('version', 1)}**{marker}")
+                        for s in v.get("steps", []):
+                            lines.append(f"  {s.get('step', '?')}. {s.get('action', '')}")
+                        lines.append("")
 
                 return [TextContent(type="text", text="\n".join(lines))]
 
@@ -1075,6 +1213,114 @@ def create_cloud_mcp_server(mem: CloudMemory, user_id: str = "default") -> "Serv
                     lines.append(f"- {m}")
 
                 return [TextContent(type="text", text="\n".join(lines))]
+
+            elif name == "checkpoint":
+                summary = arguments["summary"]
+                decisions = arguments.get("decisions", [])
+                learnings = arguments.get("learnings", [])
+                next_steps = arguments.get("next_steps", [])
+
+                parts = [f"Session checkpoint: {summary}"]
+                if decisions:
+                    parts.append("Decisions made: " + "; ".join(decisions))
+                if learnings:
+                    parts.append("Learnings: " + "; ".join(learnings))
+                if next_steps:
+                    parts.append("Next steps: " + "; ".join(next_steps))
+
+                checkpoint_text = "\n".join(parts)
+                result = mem.add([
+                    {"role": "user", "content": checkpoint_text},
+                    {"role": "assistant", "content": f"Checkpoint saved: {summary[:100]}"},
+                ], user_id=user_id)
+
+                saved_items = []
+                if decisions:
+                    saved_items.append(f"{len(decisions)} decisions")
+                if learnings:
+                    saved_items.append(f"{len(learnings)} learnings")
+                if next_steps:
+                    saved_items.append(f"{len(next_steps)} next steps")
+
+                status = result.get("status", "ok")
+                if status == "accepted":
+                    text = (
+                        f"📌 Checkpoint saved (processing in background).\n"
+                        f"Contents: {', '.join(saved_items) or 'session summary'}\n"
+                        f"Summary: {summary[:200]}"
+                    )
+                else:
+                    text = (
+                        f"📌 Checkpoint saved.\n"
+                        f"Created: {', '.join(result.get('created', [])) or 'processing'}\n"
+                        f"Contents: {', '.join(saved_items) or 'session summary'}"
+                    )
+
+                try:
+                    await server.request_context.session.send_resource_updated(uri="memory://profile")
+                    await server.request_context.session.send_resource_updated(uri="memory://recent")
+                except Exception:
+                    pass
+
+                return [TextContent(type="text", text=text)]
+
+            elif name == "context_for":
+                task = arguments["task"]
+                results = mem.search_all(task, limit=5, user_id=user_id)
+
+                lines = [f"# Context for: {task}\n"]
+
+                semantic = results.get("semantic", [])
+                if semantic:
+                    lines.append("## Relevant Knowledge\n")
+                    for r in semantic[:5]:
+                        lines.append(f"**{r.get('entity', '?')}** ({r.get('type', '?')})")
+                        for fact in r.get("facts", [])[:5]:
+                            lines.append(f"- {fact}")
+                        for k in r.get("knowledge", [])[:2]:
+                            lines.append(f"- [{k.get('type', '')}] {k.get('title', '')}: {k.get('content', '')[:150]}")
+                        lines.append("")
+
+                procedural = results.get("procedural", [])
+                if procedural:
+                    lines.append("## Relevant Procedures\n")
+                    for p in procedural[:3]:
+                        v = p.get("version", 1)
+                        lines.append(f"**{p.get('name', '?')}** (v{v})")
+                        for s in p.get("steps", []):
+                            lines.append(f"  {s.get('step', '?')}. {s.get('action', '')} — {s.get('detail', '')}")
+                        lines.append("")
+
+                episodic = results.get("episodic", [])
+                if episodic:
+                    lines.append("## Related Past Events\n")
+                    for ep in episodic[:3]:
+                        outcome = f" → {ep.get('outcome', '')}" if ep.get("outcome") else ""
+                        lines.append(f"- {ep.get('summary', '?')}{outcome}")
+                    lines.append("")
+
+                if not semantic and not procedural and not episodic:
+                    lines.append("No relevant context found in memory for this task.")
+
+                return [TextContent(type="text", text="\n".join(lines))]
+
+            elif name == "generate_rules_file":
+                fmt = arguments.get("format", "claude_md")
+                result = mem.rules(format=fmt, user_id=user_id)
+
+                if result.get("status") != "ok":
+                    return [TextContent(type="text", text=f"Could not generate rules file: {result.get('status', 'unknown error')}. {result.get('error', '')}")]
+
+                content = result.get("content", "")
+                facts_used = result.get("facts_used", 0)
+                procs_used = result.get("procedures_used", 0)
+                fmt_names = {"claude_md": "CLAUDE.md", "cursorrules": ".cursorrules", "windsurf": ".windsurfrules"}
+
+                header = (
+                    f"📄 Generated **{fmt_names.get(fmt, fmt)}** from {facts_used} facts and {procs_used} procedures.\n"
+                    f"Copy the content below to your project root.\n\n---\n\n"
+                )
+                return [TextContent(type="text", text=header + content)]
 
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

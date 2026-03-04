@@ -1450,14 +1450,14 @@ response = client.messages.create(
             "date_iso": "2026-02-08",
             "read_time": "5",
             "tags": ["Tutorial", "MCP"],
-            "excerpt": "Connect Mengram's AI memory to Claude Desktop via MCP. 26 tools for search, add, profile, and more — setup in under 3 minutes.",
+            "excerpt": "Connect Mengram's AI memory to Claude Desktop via MCP. 29 tools for search, add, profile, and more — setup in under 3 minutes.",
             "seo_title": "Set Up an AI Memory MCP Server for Claude Desktop | Mengram",
-            "seo_description": "Step-by-step guide to set up Mengram's MCP server for Claude Desktop. 26 memory tools including search, add, profile, knowledge graph, and smart triggers.",
+            "seo_description": "Step-by-step guide to set up Mengram's MCP server for Claude Desktop. 29 memory tools including search, add, profile, knowledge graph, and smart triggers.",
             "seo_keywords": "MCP memory server, Claude Desktop memory, MCP server setup, AI memory MCP, Model Context Protocol memory, Claude Desktop persistent memory",
             "content_html": """
 <h2>What is MCP?</h2>
 <p>The <strong>Model Context Protocol (MCP)</strong> is an open standard that lets AI applications like Claude Desktop, Cursor, and Windsurf connect to external tools and data sources. An MCP server provides tools that the AI can call during conversations.</p>
-<p>Mengram's MCP server gives Claude Desktop 26 memory tools — search, add, profile, knowledge graph, triggers, dedup, reflections, and more — turning it into an AI that remembers everything across sessions.</p>
+<p>Mengram's MCP server gives Claude Desktop 29 memory tools — search, add, profile, knowledge graph, triggers, dedup, reflections, and more — turning it into an AI that remembers everything across sessions.</p>
 
 <h2>Installation</h2>
 <p>You need a Mengram API key (<a href="/#signup">get one free</a>) and Claude Desktop installed.</p>
@@ -2617,7 +2617,7 @@ results = tools[0].run("how to deploy to Railway")
 }}</code></pre>
 
 <h2>Available tools</h2>
-<p>The MCP server exposes 26 tools:</p>
+<p>The MCP server exposes 29 tools:</p>
 <table>
 <tr><th>Tool</th><th>Description</th></tr>
 <tr><td><code>remember</code></td><td>Save knowledge from conversation to memory</td></tr>
@@ -2646,6 +2646,9 @@ results = tools[0].run("how to deploy to Railway")
 <tr><td><code>list_memories</code></td><td>List all memory entities with types and fact counts</td></tr>
 <tr><td><code>get_reflections</code></td><td>Get AI-generated reflections and insights</td></tr>
 <tr><td><code>dedup</code></td><td>Find and merge duplicate entities automatically</td></tr>
+<tr><td><code>checkpoint</code></td><td>Save session checkpoint with decisions and learnings</td></tr>
+<tr><td><code>context_for</code></td><td>Get relevant context pack for a specific task</td></tr>
+<tr><td><code>generate_rules_file</code></td><td>Generate CLAUDE.md / .cursorrules from memory</td></tr>
 </table>
 
 <h2>HTTP transport</h2>
@@ -4736,6 +4739,22 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             force = False
         return store.get_profile(user_id, force=force, sub_user_id=sub_user_id)
 
+    @app.get("/v1/rules", tags=["Memory"])
+    async def generate_rules(
+        format: str = Query("claude_md"),
+        force: bool = False,
+        sub_user_id: str = Query("default"),
+        ctx: AuthContext = Depends(auth),
+    ):
+        """Generate a CLAUDE.md, .cursorrules, or .windsurfrules file from memory.
+        Returns structured project rules and conventions extracted from all memory types."""
+        if format not in ("claude_md", "cursorrules", "windsurf"):
+            format = "claude_md"
+        user_id = ctx.user_id
+        if force:
+            store.cache.invalidate(f"rules:{user_id}:{sub_user_id}:{format}")
+        return store.generate_rules_file(user_id, format=format, sub_user_id=sub_user_id)
+
     # ---- Episodic Memory ----
 
     @app.get("/v1/episodes", tags=["Episodic Memory"])
@@ -5451,11 +5470,21 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                 {"name": "dedup", "description": "Find and automatically merge duplicate entities.",
                  "annotations": {"title": "Deduplicate", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
                  "inputSchema": {"type": "object", "properties": {}}},
+                {"name": "checkpoint", "description": "Save a session checkpoint with decisions, learnings, and next steps.",
+                 "annotations": {"title": "Checkpoint", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+                 "inputSchema": {"type": "object", "properties": {"summary": {"type": "string", "description": "Brief summary of what was accomplished"}, "decisions": {"type": "array", "items": {"type": "string"}, "description": "Key decisions made"}, "learnings": {"type": "array", "items": {"type": "string"}, "description": "Things learned"}, "next_steps": {"type": "array", "items": {"type": "string"}, "description": "What needs to happen next"}}, "required": ["summary"]}},
+                {"name": "context_for", "description": "Get relevant memory context for a specific task — entities, procedures, and past events.",
+                 "annotations": {"title": "Context For Task", "readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+                 "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "description": "Description of the task"}}, "required": ["task"]}},
+                {"name": "generate_rules_file", "description": "Generate a CLAUDE.md, .cursorrules, or .windsurfrules file from memory.",
+                 "annotations": {"title": "Generate Rules File", "readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+                 "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["claude_md", "cursorrules", "windsurf"], "description": "Output format"}}}},
             ],
             "resources": [
                 {"uri": "memory://profile", "name": "Cognitive Profile", "description": "LLM-generated user profile from all memory types — pin for instant personalization.", "mimeType": "text/markdown"},
                 {"uri": "memory://procedures", "name": "Active Procedures", "description": "Learned workflows with steps, trigger conditions, and reliability stats.", "mimeType": "text/markdown"},
                 {"uri": "memory://triggers", "name": "Pending Triggers", "description": "Smart triggers: reminders, contradictions, and patterns detected in memory.", "mimeType": "text/markdown"},
+                {"uri": "memory://recent", "name": "Recently Saved", "description": "Last 5 facts saved — check before saving to avoid duplicates.", "mimeType": "text/markdown"},
             ],
         }
 

@@ -324,6 +324,27 @@ def cmd_stats(args):
     sys.argv = old_argv
 
 
+def cmd_rules(args):
+    """Generate CLAUDE.md / .cursorrules from cloud memory"""
+    api_key = os.environ.get("MENGRAM_API_KEY", "")
+    if not api_key:
+        print("❌ Set MENGRAM_API_KEY environment variable", file=sys.stderr)
+        sys.exit(1)
+
+    from cloud.client import CloudMemory
+    base_url = os.environ.get("MENGRAM_URL", "https://mengram.io")
+    mem = CloudMemory(api_key=api_key, base_url=base_url)
+
+    fmt = args.format or "claude_md"
+    result = mem.rules(format=fmt, force=args.force)
+
+    if result.get("status") != "ok":
+        print(f"❌ {result.get('status', 'unknown')}: {result.get('error', '')}", file=sys.stderr)
+        sys.exit(1)
+
+    print(result["content"])
+
+
 def cmd_api(args):
     """Start REST API server"""
     config_path = args.config or str(DEFAULT_CONFIG)
@@ -501,6 +522,12 @@ def main():
     p_stats = sub.add_parser("stats", help="Vault statistics")
     p_stats.add_argument("--config", help="Config path")
 
+    # rules
+    p_rules = sub.add_parser("rules", help="Generate CLAUDE.md / .cursorrules from cloud memory")
+    p_rules.add_argument("--format", choices=["claude_md", "cursorrules", "windsurf"],
+                          default="claude_md", help="Output format (default: claude_md)")
+    p_rules.add_argument("--force", action="store_true", help="Regenerate (bypass cache)")
+
     # api
     p_api = sub.add_parser("api", help="Start REST API server")
     p_api.add_argument("--config", help="Config path")
@@ -542,6 +569,8 @@ def main():
         cmd_status(args)
     elif args.command == "stats":
         cmd_stats(args)
+    elif args.command == "rules":
+        cmd_rules(args)
     elif args.command == "api":
         cmd_api(args)
     elif args.command == "import":

@@ -2849,6 +2849,126 @@ SEMANTIC MEMORY (facts about the user):
             return {"user_id": user_id, "system_prompt": "", "facts_used": total_facts,
                     "status": "error", "error": str(e)}
 
+    def generate_rules_file(self, user_id: str, format: str = "claude_md",
+                            sub_user_id: str = "default") -> dict:
+        """Generate a CLAUDE.md / .cursorrules / .windsurfrules file from user memory.
+        Focuses on technical context (tech stack, conventions, workflows), not personality.
+        Cached for 1 hour."""
+        cache_key = f"rules:{user_id}:{sub_user_id}:{format}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
+        entities = self.get_all_entities_full(user_id, sub_user_id=sub_user_id)
+        if not entities:
+            return {"content": "", "status": "no_data", "format": format}
+
+        # Categorize entities
+        tech_lines, project_lines, knowledge_lines = [], [], []
+        for ent in entities:
+            facts_str = "; ".join(ent.get("facts", [])[:10])
+            if ent.get("type") == "technology":
+                tech_lines.append(f"- {ent['entity']}: {facts_str}")
+            elif ent.get("type") == "project":
+                project_lines.append(f"- {ent['entity']}: {facts_str}")
+
+            for k in ent.get("knowledge", []):
+                k_type = k.get("type", "")
+                if k_type in ("solution", "command", "decision", "snippet", "pattern", "reference"):
+                    knowledge_lines.append(
+                        f"- [{k_type}] {k.get('title', '')}: {k.get('content', '')[:200]}"
+                    )
+
+        tech_lines = tech_lines[:20]
+        project_lines = project_lines[:10]
+        knowledge_lines = knowledge_lines[:30]
+
+        # Procedures
+        procedures = self.get_procedures(user_id, limit=15, sub_user_id=sub_user_id)
+        proc_lines = []
+        for pr in procedures:
+            steps_text = " -> ".join(s.get("action", "") for s in pr.get("steps", []))
+            proc_lines.append(f"- {pr['name']}: {steps_text}")
+
+        # Reflections
+        reflections = self.get_reflections(user_id, sub_user_id=sub_user_id)
+        reflection_lines = []
+        for r in reflections[:10]:
+            reflection_lines.append(f"- [{r.get('scope', '')}] {r.get('title', '')}: {r.get('content', '')[:150]}")
+
+        total_facts = sum(len(e.get("facts", [])) for e in entities)
+
+        format_instructions = {
+            "claude_md": "Format as a CLAUDE.md file (markdown used by Claude Code for project context).",
+            "cursorrules": "Format as a .cursorrules file (used by Cursor IDE for AI coding rules).",
+            "windsurf": "Format as a .windsurfrules file (used by Windsurf IDE for AI rules).",
+        }
+
+        prompt = f"""You are a developer tools configuration generator.
+Based on the user's memory data below, generate a structured rules/context file
+that an AI coding assistant can use to understand the user's projects and conventions.
+
+{format_instructions.get(format, format_instructions['claude_md'])}
+
+Include these sections (use markdown headers):
+1. **Project Overview** — main projects and what they do
+2. **Tech Stack** — technologies, frameworks, languages with specific versions/configs if known
+3. **Coding Conventions** — patterns, preferences, style rules extracted from facts
+4. **Workflows** — step-by-step procedures the user follows
+5. **Known Issues & Solutions** — problems encountered and how they were solved
+6. **Key Decisions** — architectural and design decisions with rationale
+7. **Important Context** — anything else an AI assistant should know
+
+Rules:
+- Be concise and actionable — each item should help an AI write better code
+- Use bullet points, not paragraphs
+- Include specific values (port numbers, model names, config values) when available
+- Skip sections that have no relevant data
+- Do NOT include personal information (age, location, relationships) — focus on technical context
+- Output ONLY the file content, no preamble
+
+TECHNOLOGY ENTITIES:
+{chr(10).join(tech_lines) or '(none)'}
+
+PROJECT ENTITIES:
+{chr(10).join(project_lines) or '(none)'}
+
+KNOWLEDGE ITEMS:
+{chr(10).join(knowledge_lines) or '(none)'}
+
+PROCEDURES/WORKFLOWS:
+{chr(10).join(proc_lines) or '(none)'}
+
+REFLECTIONS/PATTERNS:
+{chr(10).join(reflection_lines) or '(none)'}"""
+
+        import os
+        try:
+            import openai as _openai
+            client = _openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000,
+                temperature=0.3,
+            )
+            content = resp.choices[0].message.content.strip()
+
+            result = {
+                "content": content,
+                "format": format,
+                "facts_used": total_facts,
+                "procedures_used": len(procedures),
+                "last_updated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "status": "ok",
+            }
+            self.cache.set(cache_key, result, ttl=3600)
+            return result
+
+        except Exception as e:
+            logger.error(f"Rules file generation failed: {e}")
+            return {"content": "", "status": "error", "error": str(e), "format": format}
+
     def _get_stats_uncached(self, user_id: str, sub_user_id: str = "default") -> dict:
         """User's vault statistics (uncached)."""
         with self._cursor(dict_cursor=True) as cur:

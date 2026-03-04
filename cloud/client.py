@@ -362,6 +362,27 @@ class CloudMemory:
             params["sub_user_id"] = user_id
         return self._request("GET", "/v1/profile", params=params)
 
+    def rules(self, format: str = "claude_md", force: bool = False,
+              user_id: str = "default") -> dict:
+        """Generate a CLAUDE.md / .cursorrules / .windsurfrules file from memory.
+
+        Returns structured project rules and conventions, not a personality profile.
+
+        Args:
+            format: Output format — "claude_md", "cursorrules", or "windsurf"
+            force: If True, regenerate even if cached
+            user_id: User identifier
+
+        Returns:
+            {"content": "...", "format": "claude_md", "facts_used": 47, "status": "ok"}
+        """
+        params = {"format": format}
+        if force:
+            params["force"] = "true"
+        if user_id and user_id != "default":
+            params["sub_user_id"] = user_id
+        return self._request("GET", "/v1/rules", params=params)
+
     # ---- Episodic Memory ----
 
     def episodes(self, query: str = None, limit: int = None,
