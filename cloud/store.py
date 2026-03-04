@@ -790,6 +790,7 @@ class CloudStore:
                     reflect_count INT DEFAULT 0,
                     dedup_count INT DEFAULT 0,
                     reindex_count INT DEFAULT 0,
+                    rules_count INT DEFAULT 0,
                     UNIQUE(user_id, period_start)
                 )
             """)
@@ -866,6 +867,14 @@ class CloudStore:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_matview_eo_user_sub ON entity_overview (user_id, sub_user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_matview_eo_facts ON entity_overview (user_id, sub_user_id, facts_count DESC)")
         logger.info("✅ Migration complete (v2.17: materialized view)")
+
+        # --- v2.18 Rules quota counter ---
+        with self._cursor() as cur:
+            cur.execute("""
+                ALTER TABLE usage_counters
+                ADD COLUMN IF NOT EXISTS rules_count INT DEFAULT 0
+            """)
+        logger.info("✅ Migration complete (v2.18: rules quota counter)")
 
         with self._cursor() as cur:
             cur.execute("SELECT pg_advisory_unlock(42)")
@@ -2823,7 +2832,7 @@ SEMANTIC MEMORY (facts about the user):
 {procedures_text}"""
 
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
                 temperature=0.3,
@@ -2947,7 +2956,7 @@ REFLECTIONS/PATTERNS:
             import openai as _openai
             client = _openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=2000,
                 temperature=0.3,
@@ -3122,7 +3131,8 @@ REFLECTIONS/PATTERNS:
         column = f"{action}_count"
         # Validate column name to prevent SQL injection
         valid_columns = {"add_count", "search_count", "agent_count",
-                        "reflect_count", "dedup_count", "reindex_count"}
+                        "reflect_count", "dedup_count", "reindex_count",
+                        "rules_count"}
         if column not in valid_columns:
             raise ValueError(f"Invalid action: {action}")
 
@@ -3150,7 +3160,8 @@ REFLECTIONS/PATTERNS:
 
         column = f"{action}_count"
         valid_columns = {"add_count", "search_count", "agent_count",
-                        "reflect_count", "dedup_count", "reindex_count"}
+                        "reflect_count", "dedup_count", "reindex_count",
+                        "rules_count"}
         if column not in valid_columns:
             raise ValueError(f"Invalid action: {action}")
 
@@ -3211,7 +3222,8 @@ REFLECTIONS/PATTERNS:
         """Get current month's usage count for an action. Cached 10s."""
         column = f"{action}_count"
         valid_columns = {"add_count", "search_count", "agent_count",
-                        "reflect_count", "dedup_count", "reindex_count"}
+                        "reflect_count", "dedup_count", "reindex_count",
+                        "rules_count"}
         if column not in valid_columns:
             return 0
 
@@ -3237,7 +3249,8 @@ REFLECTIONS/PATTERNS:
         with self._cursor(dict_cursor=True) as cur:
             cur.execute(
                 """SELECT add_count, search_count, agent_count,
-                          reflect_count, dedup_count, reindex_count
+                          reflect_count, dedup_count, reindex_count,
+                          rules_count
                    FROM usage_counters
                    WHERE user_id = %s AND period_start = %s""",
                 (user_id, period_start)
@@ -3248,6 +3261,7 @@ REFLECTIONS/PATTERNS:
             return {
                 "add_count": 0, "search_count": 0, "agent_count": 0,
                 "reflect_count": 0, "dedup_count": 0, "reindex_count": 0,
+                "rules_count": 0,
             }
 
     # ---- Graph ----

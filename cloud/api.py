@@ -46,9 +46,9 @@ class AuthContext:
     rate_limit: int   # per-minute rate limit
 
 PLAN_QUOTAS = {
-    "free":     {"adds": 100,   "searches": 500,    "agents": 5,   "reflects": 5,   "dedups": 2,   "reindexes": 2,   "rate_limit": 30,  "webhooks": 0,  "teams": 0,  "sub_users": 3},
-    "pro":      {"adds": 1_000, "searches": 10_000, "agents": 50,  "reflects": 30,  "dedups": 20,  "reindexes": 10,  "rate_limit": 120, "webhooks": 10, "teams": 5,  "sub_users": 50},
-    "business": {"adds": 5_000, "searches": 30_000, "agents": -1,  "reflects": -1,  "dedups": -1,  "reindexes": -1,  "rate_limit": 300, "webhooks": 50, "teams": -1, "sub_users": -1},
+    "free":     {"adds": 100,   "searches": 500,    "agents": 5,   "reflects": 5,   "dedups": 2,   "reindexes": 2,   "rules": 5,    "rate_limit": 30,  "webhooks": 0,  "teams": 0,  "sub_users": 3},
+    "pro":      {"adds": 1_000, "searches": 10_000, "agents": 50,  "reflects": 30,  "dedups": 20,  "reindexes": 10,  "rules": 50,   "rate_limit": 120, "webhooks": 10, "teams": 5,  "sub_users": 50},
+    "business": {"adds": 5_000, "searches": 30_000, "agents": -1,  "reflects": -1,  "dedups": -1,  "reindexes": -1,  "rules": -1,   "rate_limit": 300, "webhooks": 50, "teams": -1, "sub_users": -1},
 }
 
 
@@ -445,6 +445,7 @@ Be strict — only include entities that directly answer or relate to the query.
         quota_map = {
             "add": "adds", "search": "searches", "agent": "agents",
             "reflect": "reflects", "dedup": "dedups", "reindex": "reindexes",
+            "rules": "rules",
         }
         quota_key = quota_map.get(action)
         if not quota_key:
@@ -4726,6 +4727,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         user_id = ctx.user_id
         if target_user_id != user_id:
             raise HTTPException(status_code=403, detail="Cannot access another user's profile")
+        use_quota(ctx, "rules")  # profile uses LLM, shares quota with rules
         # force=true bypasses cache → LLM call, restrict to paid plans
         if force and ctx.plan == "free":
             force = False
@@ -4735,6 +4737,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     async def get_own_profile(force: bool = False, sub_user_id: str = Query("default"), ctx: AuthContext = Depends(auth)):
         """Cognitive Profile for the authenticated user."""
         user_id = ctx.user_id
+        use_quota(ctx, "rules")  # profile uses LLM, shares quota with rules
         if force and ctx.plan == "free":
             force = False
         return store.get_profile(user_id, force=force, sub_user_id=sub_user_id)
@@ -4751,6 +4754,9 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         if format not in ("claude_md", "cursorrules", "windsurf"):
             format = "claude_md"
         user_id = ctx.user_id
+        use_quota(ctx, "rules")
+        if force and ctx.plan == "free":
+            force = False
         if force:
             store.cache.invalidate(f"rules:{user_id}:{sub_user_id}:{format}")
         return store.generate_rules_file(user_id, format=format, sub_user_id=sub_user_id)
