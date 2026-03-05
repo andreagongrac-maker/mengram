@@ -345,6 +345,339 @@ def cmd_rules(args):
     print(result["content"])
 
 
+def get_claude_code_settings_path() -> Path:
+    """Path to Claude Code user settings"""
+    return Path.home() / ".claude" / "settings.json"
+
+
+def output_hook_success():
+    """Output success JSON for Claude Code hook and exit cleanly."""
+    print(json.dumps({"continue": True, "suppressOutput": True}))
+    sys.exit(0)
+
+
+def cmd_auto_save(args):
+    """Hook handler — called by Claude Code on Stop event. Reads stdin, saves to Mengram."""
+    try:
+        api_key = os.environ.get("MENGRAM_API_KEY", "")
+        if not api_key:
+            output_hook_success()
+
+        # Read hook input from stdin
+        try:
+            input_data = json.loads(sys.stdin.read())
+        except Exception:
+            output_hook_success()
+
+        # Avoid infinite loops
+        if input_data.get("stop_hook_active"):
+            output_hook_success()
+
+        last_msg = input_data.get("last_assistant_message", "")
+        if not last_msg or len(last_msg) < 100:
+            output_hook_success()
+
+        # Throttle: only save every Nth response
+        session_id = input_data.get("session_id", "unknown")
+        every = getattr(args, "every", 3) or 3
+        import tempfile
+        counter_file = Path(tempfile.gettempdir()) / f"mengram-hook-{session_id}.count"
+
+        count = 0
+        try:
+            if counter_file.exists():
+                count = int(counter_file.read_text().strip())
+        except Exception:
+            count = 0
+
+        count += 1
+        try:
+            counter_file.write_text(str(count))
+        except Exception:
+            pass
+
+        if count % every != 0:
+            output_hook_success()
+
+        # Extract last user message from transcript
+        user_message = ""
+        transcript_path = input_data.get("transcript_path", "")
+        if transcript_path and Path(transcript_path).exists():
+            try:
+                with open(transcript_path, "r") as f:
+                    lines = f.readlines()
+                # Read last 500 lines max for performance
+                for line in reversed(lines[-500:]):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("type") == "user":
+                            content = entry.get("message", {}).get("content", "")
+                            if isinstance(content, list):
+                                parts = []
+                                for item in content:
+                                    if isinstance(item, dict) and item.get("type") == "text":
+                                        parts.append(item.get("text", ""))
+                                    elif isinstance(item, str):
+                                        parts.append(item)
+                                user_message = " ".join(parts)
+                            elif isinstance(content, str):
+                                user_message = content
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # Skip interrupted requests
+        if user_message.startswith("[Request interrupted"):
+            user_message = ""
+
+        # Build messages
+        messages = []
+        if user_message:
+            messages.append({"role": "user", "content": user_message})
+        messages.append({"role": "assistant", "content": last_msg})
+
+        # Send to Mengram API
+        from cloud.client import CloudMemory
+        base_url = os.environ.get("MENGRAM_URL", "https://mengram.io")
+        user_id = getattr(args, "user_id", None) or os.environ.get("MENGRAM_USER_ID", "default")
+
+        mem = CloudMemory(api_key=api_key, base_url=base_url)
+        mem.add(
+            messages,
+            user_id=user_id,
+            app_id="claude-code",
+            agent_id="auto-save",
+            run_id=session_id,
+        )
+
+        output_hook_success()
+
+    except SystemExit:
+        raise
+    except Exception:
+        # Never crash, never block Claude
+        print(json.dumps({"continue": True, "suppressOutput": True}))
+        sys.exit(0)
+
+
+def cmd_hook(args):
+    """Manage Claude Code auto-save hook"""
+    action = getattr(args, "hook_action", None)
+    if action == "install":
+        cmd_hook_install(args)
+    elif action == "uninstall":
+        cmd_hook_uninstall(args)
+    elif action == "status":
+        cmd_hook_status(args)
+    else:
+        print("Usage: mengram hook {install,uninstall,status}")
+        print("  mengram hook install           Install auto-save hook")
+        print("  mengram hook install --every 5  Save every 5th response")
+        print("  mengram hook uninstall         Remove auto-save hook")
+        print("  mengram hook status            Check hook status")
+        sys.exit(1)
+
+
+def cmd_hook_install(args):
+    """Install Claude Code auto-save hook"""
+    api_key = os.environ.get("MENGRAM_API_KEY", "")
+    if not api_key:
+        print("Set MENGRAM_API_KEY environment variable first", file=sys.stderr)
+        print("Get a free key at: https://mengram.io/#signup", file=sys.stderr)
+        sys.exit(1)
+
+    every = getattr(args, "every", 3) or 3
+    user_id = getattr(args, "user_id", None)
+
+    # Build the hook command
+    hook_cmd = f"mengram auto-save --every {every}"
+    if user_id:
+        hook_cmd += f" --user-id {user_id}"
+
+    # Read existing settings
+    settings_path = get_claude_code_settings_path()
+    settings = {}
+    if settings_path.exists():
+        try:
+            with open(settings_path) as f:
+                settings = json.load(f)
+        except (json.JSONDecodeError, Exception):
+            settings = {}
+
+    # Ensure hooks.Stop exists
+    if "hooks" not in settings:
+        settings["hooks"] = {}
+    if "Stop" not in settings["hooks"]:
+        settings["hooks"]["Stop"] = []
+
+    # Check if mengram hook already exists
+    found = False
+    for group in settings["hooks"]["Stop"]:
+        hooks_list = group.get("hooks", [])
+        for i, hook in enumerate(hooks_list):
+            if "mengram auto-save" in hook.get("command", ""):
+                # Update existing hook
+                hooks_list[i] = {
+                    "type": "command",
+                    "command": hook_cmd,
+                    "timeout": 30,
+                    "async": True,
+                }
+                found = True
+                break
+        if found:
+            break
+
+    if not found:
+        # Add new hook
+        settings["hooks"]["Stop"].append({
+            "hooks": [{
+                "type": "command",
+                "command": hook_cmd,
+                "timeout": 30,
+                "async": True,
+            }]
+        })
+
+    # Write settings
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+    action = "Updated" if found else "Installed"
+    print(f"Mengram auto-save hook {action.lower()}")
+    print(f"  Saving every {every} response(s)")
+    print(f"  Settings: {settings_path}")
+    print(f"\nRestart Claude Code for the hook to take effect.")
+
+
+def cmd_hook_uninstall(args):
+    """Remove Claude Code auto-save hook"""
+    settings_path = get_claude_code_settings_path()
+
+    if not settings_path.exists():
+        print("No Claude Code settings found. Nothing to uninstall.")
+        return
+
+    try:
+        with open(settings_path) as f:
+            settings = json.load(f)
+    except Exception:
+        print("Could not read settings file.")
+        return
+
+    stop_hooks = settings.get("hooks", {}).get("Stop", [])
+    if not stop_hooks:
+        print("No hook installed. Nothing to uninstall.")
+        return
+
+    # Filter out mengram hooks
+    new_stop = []
+    removed = False
+    for group in stop_hooks:
+        hooks_list = group.get("hooks", [])
+        filtered = [h for h in hooks_list if "mengram auto-save" not in h.get("command", "")]
+        if len(filtered) < len(hooks_list):
+            removed = True
+        if filtered:
+            group["hooks"] = filtered
+            new_stop.append(group)
+
+    if not removed:
+        print("No Mengram hook found. Nothing to uninstall.")
+        return
+
+    # Update settings
+    settings["hooks"]["Stop"] = new_stop
+    if not settings["hooks"]["Stop"]:
+        del settings["hooks"]["Stop"]
+    if not settings["hooks"]:
+        del settings["hooks"]
+
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+    # Clean up counter files
+    import tempfile, glob
+    for f in glob.glob(str(Path(tempfile.gettempdir()) / "mengram-hook-*.count")):
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+
+    print("Mengram auto-save hook removed.")
+    print("Restart Claude Code for the change to take effect.")
+
+
+def cmd_hook_status(args):
+    """Check Claude Code auto-save hook status"""
+    print("Mengram Auto-Save Hook\n")
+
+    # Check settings file
+    settings_path = get_claude_code_settings_path()
+    hook_installed = False
+    every_n = None
+
+    if settings_path.exists():
+        try:
+            with open(settings_path) as f:
+                settings = json.load(f)
+            for group in settings.get("hooks", {}).get("Stop", []):
+                for hook in group.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    if "mengram auto-save" in cmd:
+                        hook_installed = True
+                        # Parse --every value
+                        parts = cmd.split()
+                        for i, p in enumerate(parts):
+                            if p == "--every" and i + 1 < len(parts):
+                                try:
+                                    every_n = int(parts[i + 1])
+                                except ValueError:
+                                    pass
+                        break
+        except Exception:
+            pass
+
+    if hook_installed:
+        every_str = f" (every {every_n} responses)" if every_n else ""
+        print(f"  Hook:     installed{every_str}")
+    else:
+        print("  Hook:     not installed")
+
+    # Check API key
+    api_key = os.environ.get("MENGRAM_API_KEY", "")
+    if api_key:
+        masked = api_key[:6] + "..." + api_key[-4:]
+        print(f"  API Key:  {masked} (set)")
+    else:
+        print("  API Key:  not set")
+
+    # Check API connectivity
+    if api_key:
+        try:
+            from cloud.client import CloudMemory
+            base_url = os.environ.get("MENGRAM_URL", "https://mengram.io")
+            mem = CloudMemory(api_key=api_key, base_url=base_url)
+            info = mem._request("GET", "/v1/me")
+            plan = info.get("plan", "?")
+            print(f"  API:      connected ({plan} plan)")
+        except Exception as e:
+            print(f"  API:      error ({e})")
+    else:
+        print("  API:      skipped (no key)")
+
+    print(f"  Settings: {settings_path}")
+
+    if not hook_installed:
+        print("\nRun 'mengram hook install' to enable auto-save.")
+
+
 def cmd_api(args):
     """Start REST API server"""
     config_path = args.config or str(DEFAULT_CONFIG)
@@ -553,6 +886,22 @@ def main():
     p_files.add_argument("--chunk-chars", type=int, default=4000, dest="chunk_chars")
     p_files.add_argument("--cloud", action="store_true", help="Use cloud API")
 
+    # hook
+    p_hook = sub.add_parser("hook", help="Manage Claude Code auto-save hook")
+    hook_sub = p_hook.add_subparsers(dest="hook_action")
+    p_hook_install = hook_sub.add_parser("install", help="Install auto-save hook")
+    p_hook_install.add_argument("--every", type=int, default=3,
+                                 help="Save every Nth response (default: 3)")
+    p_hook_install.add_argument("--user-id", default=None,
+                                 help="Mengram user_id (default: 'default')")
+    hook_sub.add_parser("uninstall", help="Remove auto-save hook")
+    hook_sub.add_parser("status", help="Check hook status")
+
+    # auto-save (internal, called by Claude Code hook)
+    p_autosave = sub.add_parser("auto-save", help=argparse.SUPPRESS)
+    p_autosave.add_argument("--every", type=int, default=3)
+    p_autosave.add_argument("--user-id", default=None)
+
     # web
     p_web = sub.add_parser("web", help="Start Web UI (chat + knowledge graph)")
     p_web.add_argument("--config", help="Config path")
@@ -575,6 +924,10 @@ def main():
         cmd_api(args)
     elif args.command == "import":
         cmd_import(args)
+    elif args.command == "hook":
+        cmd_hook(args)
+    elif args.command == "auto-save":
+        cmd_auto_save(args)
     elif args.command == "web":
         cmd_web(args)
     else:
