@@ -767,6 +767,47 @@ m.add("I love hiking in the mountains")</code></pre>
     async def robots():
         return "User-agent: *\nAllow: /\nSitemap: https://mengram.io/sitemap.xml"
 
+    # ---- Enterprise Inquiry ----
+    @app.post("/enterprise-inquiry")
+    async def enterprise_inquiry(request: Request):
+        """Handle Enterprise tier contact form."""
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(400, "Invalid request")
+        name = (data.get("name") or "").strip()
+        email = (data.get("email") or "").strip()
+        company = (data.get("company") or "").strip()
+        team_size = (data.get("team_size") or "").strip()
+        message = (data.get("message") or "").strip()
+        if not name or not email:
+            raise HTTPException(400, "Name and email are required")
+        # Send notification email via Resend
+        resend_key = os.environ.get("RESEND_API_KEY")
+        if resend_key:
+            try:
+                import resend
+                resend.api_key = resend_key
+                resend.Emails.send({
+                    "from": EMAIL_FROM,
+                    "to": ["the.baizhanov@gmail.com"],
+                    "reply_to": email,
+                    "subject": f"Mengram Enterprise Inquiry — {company or name}",
+                    "text": (
+                        f"New Enterprise inquiry from mengram.io\n\n"
+                        f"Name: {name}\n"
+                        f"Email: {email}\n"
+                        f"Company: {company or 'Not provided'}\n"
+                        f"Team size: {team_size or 'Not provided'}\n\n"
+                        f"Message:\n{message or 'No message'}\n"
+                    ),
+                })
+            except Exception as e:
+                logger.error(f"Failed to send enterprise inquiry email: {e}")
+        else:
+            logger.warning(f"Enterprise inquiry from {email} (no RESEND_API_KEY)")
+        return {"status": "ok"}
+
     @app.get("/sitemap.xml")
     async def sitemap():
         """XML sitemap for search engines."""
