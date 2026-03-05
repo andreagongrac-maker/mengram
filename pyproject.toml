@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mengram-ai"
-version = "2.15.1"
-description = "Human-like memory for AI — semantic, episodic & procedural. Experience-driven procedures, Cognitive Profile, unified search, memory agents. Free open-source Mem0 alternative."
+version = "2.16.0"
+description = "Human-like memory for AI — auto-save, auto-recall, cognitive profile. Claude Code hooks, MCP server (29 tools), semantic/episodic/procedural memory. Free open-source Mem0 alternative."
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
@@ -18,6 +18,7 @@ keywords = [
     "agents", "webhooks", "mem0-alternative", "langchain",
     "episodic-memory", "procedural-memory", "cognitive-profile",
     "contextual-memory", "langchain-memory", "experience-driven-procedures", "openclaw",
+    "claude-code", "auto-memory", "hooks",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

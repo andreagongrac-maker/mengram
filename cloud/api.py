@@ -198,7 +198,7 @@ results = m.search_all("deployment")  # semantic + episodic + procedural
 profile = m.get_profile()             # instant system prompt
 ```
         """,
-        version="2.15.1",
+        version="2.16.0",
         docs_url="/swagger",
         redoc_url="/redoc",
         openapi_tags=[
@@ -3564,7 +3564,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
     @app.get("/v1/health", tags=["System"])
     async def health(authorization: str = Header(None)):
         """Health check. Returns basic status for unauthenticated, detailed diagnostics for authenticated."""
-        result = {"status": "ok", "version": "2.15.1"}
+        result = {"status": "ok", "version": "2.16.0"}
 
         # Only expose detailed diagnostics to authenticated users
         if authorization:
@@ -5391,7 +5391,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             "serverInfo": {
                 "name": "mengram",
                 "title": "Mengram — AI Memory Layer",
-                "version": "2.15.1",
+                "version": "2.16.0",
                 "description": "Give AI agents memory that actually learns. 3 memory types: semantic (facts & preferences), episodic (events & decisions), and procedural (workflows that evolve from failures). Cognitive Profile, Smart Triggers, Memory Agents, Knowledge Graph. Free cloud API.",
                 "homepage": "https://mengram.io",
                 "icon": "https://mengram.io/static/icon-512.png",
