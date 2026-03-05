@@ -832,9 +832,9 @@
         }
         .pricing-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 20px;
-            max-width: 960px;
+            max-width: 1200px;
             margin: 0 auto;
         }
         .price-card {
@@ -1316,7 +1316,8 @@
                 "offers": [
                     { "@type": "Offer", "price": "0", "priceCurrency": "USD", "name": "Free" },
                     { "@type": "Offer", "price": "19", "priceCurrency": "USD", "name": "Pro" },
-                    { "@type": "Offer", "price": "99", "priceCurrency": "USD", "name": "Business" }
+                    { "@type": "Offer", "price": "99", "priceCurrency": "USD", "name": "Business" },
+                    { "@type": "Offer", "price": "0", "priceCurrency": "USD", "name": "Enterprise", "description": "Custom pricing — contact us" }
                 ],
                 "featureList": "Claude Code Auto-Save Hooks, Claude Code Auto-Recall, Cognitive Profile, Semantic Memory, Episodic Memory, Procedural Memory, Memory Agents, Knowledge Graph, MCP Server (29 tools), LangChain Integration, CrewAI Integration, Python SDK, JavaScript SDK, REST API",
                 "softwareVersion": "2.16.0",
@@ -2256,6 +2257,23 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
                         <li>Unlimited teams</li>
                     </ul>
                     <a href="/dashboard" class="price-btn">Upgrade to Business</a>
+                </div>
+                <!-- Enterprise -->
+                <div class="price-card reveal">
+                    <h3>Enterprise</h3>
+                    <div class="price-amount">Custom</div>
+                    <div class="price-desc">For organizations with custom requirements.</div>
+                    <ul class="price-features">
+                        <li>Custom memory & search limits</li>
+                        <li>Dedicated infrastructure</li>
+                        <li>Custom rate limits</li>
+                        <li>SSO & access controls</li>
+                        <li>Priority support & SLA</li>
+                        <li>Custom integrations</li>
+                        <li>Data residency options</li>
+                        <li>On-premise deployment</li>
+                    </ul>
+                    <a href="mailto:the.baizhanov@gmail.com?subject=Mengram%20Enterprise&body=Hi%20Ali%2C%0A%0AI'm%20interested%20in%20Mengram%20Enterprise.%0A%0ACompany%3A%20%0AUse%20case%3A%20%0ATeam%20size%3A%20%0AExpected%20volume%3A%20" class="price-btn">Contact Us</a>
                 </div>
             </div>
         </section>
