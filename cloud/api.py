@@ -613,17 +613,12 @@ Be strict — only include entities that directly answer or relate to the query.
                     </div>
 
                     <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px;margin:0 0 12px">
-                        <p style="color:#8888a8;font-size:12px;margin:0 0 6px">Step 2 — Set your key</p>
-                        <code style="color:#22c55e;font-size:13px">export MENGRAM_API_KEY={api_key}</code>
-                    </div>
-
-                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px;margin:0 0 12px">
-                        <p style="color:#8888a8;font-size:12px;margin:0 0 6px">Step 3 — Install hooks</p>
-                        <code style="color:#22c55e;font-size:13px">mengram hook install</code>
+                        <p style="color:#8888a8;font-size:12px;margin:0 0 6px">Step 2 — Setup (saves key + installs hooks automatically)</p>
+                        <code style="color:#22c55e;font-size:13px">mengram setup</code>
                     </div>
 
                     <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px">
-                        <p style="color:#8888a8;font-size:12px;margin:0 0 6px">Step 4 — Restart Claude Code</p>
+                        <p style="color:#8888a8;font-size:12px;margin:0 0 6px">Step 3 — Restart Claude Code</p>
                         <code style="color:#22c55e;font-size:13px">claude</code>
                     </div>
                 </div>
@@ -638,7 +633,7 @@ Be strict — only include entities that directly answer or relate to the query.
                 </div>
 
                 <p style="font-size:13px;color:#8888a8;line-height:1.6;margin-top:20px">
-                    Add <code style="color:#a78bfa">export MENGRAM_API_KEY={api_key}</code> to your <code style="color:#a78bfa">~/.zshrc</code> or <code style="color:#a78bfa">~/.bashrc</code> so it persists across terminal sessions.
+                    Already have a key? Set it manually: <code style="color:#a78bfa">export MENGRAM_API_KEY={api_key}</code> in <code style="color:#a78bfa">~/.zshrc</code>, then run <code style="color:#a78bfa">mengram hook install</code>.
                 </p>
 
                 <hr style="border:none;border-top:1px solid #1a1a2e;margin:28px 0">
@@ -1871,10 +1866,9 @@ reviewer = Agent(role="Reviewer", memory=True)
 <p>Mengram installs 3 Claude Code hooks that create a complete memory loop:</p>
 
 <pre><code>pip install mengram-ai
-export MENGRAM_API_KEY=om-...    # Free key at mengram.io
-mengram hook install</code></pre>
+mengram setup</code></pre>
 
-<p>That's it. Here's what happens automatically:</p>
+<p>That's it — signup, key saving, and hook install all happen in the terminal. Here's what happens automatically:</p>
 
 <pre><code>Session Start  →  Loads your cognitive profile
                   (who you are, preferences, tech stack)
@@ -1924,8 +1918,7 @@ mengram hook install --every 5  # Save every 5th response</code></pre>
 
 <h2>Get started</h2>
 <pre><code>pip install mengram-ai
-export MENGRAM_API_KEY=om-...    # Free at mengram.io
-mengram hook install</code></pre>
+mengram setup</code></pre>
 <p>Restart Claude Code. That's it — Claude remembers now.</p>
 """,
             "related": ["cognitive-profile-system-prompts", "mcp-memory-server-setup"],
@@ -3506,7 +3499,7 @@ h1{{font-size:22px;margin-bottom:8px;color:#34d399;text-align:center}}
 </div>
 <p class="warn">Key also sent to {email}</p>
 
-<p class="steps-title">Get started in 3 steps:</p>
+<p class="steps-title">Get started in 2 steps:</p>
 
 <div class="setup-step">
 <span class="step-num">1</span>
@@ -3519,17 +3512,9 @@ h1{{font-size:22px;margin-bottom:8px;color:#34d399;text-align:center}}
 <div class="setup-step">
 <span class="step-num">2</span>
 <div class="step-content">
-<div class="step-label">Set your key</div>
-<div class="step-cmd"><code>export MENGRAM_API_KEY={api_key}</code><button onclick="cx(this)">Copy</button></div>
-<div class="step-tip">Add to ~/.zshrc or ~/.bashrc to persist</div>
-</div>
-</div>
-
-<div class="setup-step">
-<span class="step-num">3</span>
-<div class="step-content">
-<div class="step-label">Enable Claude Code auto-memory</div>
-<div class="step-cmd"><code>mengram hook install</code><button onclick="cx(this)">Copy</button></div>
+<div class="step-label">Setup (saves key + installs hooks)</div>
+<div class="step-cmd"><code>mengram setup</code><button onclick="cx(this)">Copy</button></div>
+<div class="step-tip">Already have a key? Use: <code>export MENGRAM_API_KEY={api_key}</code></div>
 </div>
 </div>
 

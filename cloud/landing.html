@@ -14,7 +14,7 @@
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://mengram.io">
     <meta property="og:title" content="Mengram — Auto-Memory for Claude Code & AI Agents">
-    <meta property="og:description" content="One command: mengram hook install. Claude Code auto-saves conversations, auto-recalls context on every prompt, loads your profile on start. 3 memory types, MCP server, free tier.">
+    <meta property="og:description" content="Two commands: pip install mengram-ai && mengram setup. Claude Code auto-saves conversations, auto-recalls context on every prompt, loads your profile on start. 3 memory types, MCP server, free tier.">
     <meta property="og:site_name" content="Mengram">
     <meta property="og:image" content="https://opengraph.githubassets.com/1/alibaizhanov/mengram">
     <meta property="og:image:width" content="1200">
@@ -23,7 +23,7 @@
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Mengram — Auto-Memory for Claude Code & AI Agents">
-    <meta name="twitter:description" content="One command: mengram hook install. Auto-save, auto-recall, cognitive profile. 3 memory types, 29 MCP tools, Python & JS SDKs. Free Mem0 alternative.">
+    <meta name="twitter:description" content="Two commands: pip install && mengram setup. Auto-save, auto-recall, cognitive profile. 3 memory types, 29 MCP tools, Python & JS SDKs. Free Mem0 alternative.">
     <meta name="twitter:image" content="https://opengraph.githubassets.com/1/alibaizhanov/mengram">
     <meta name="twitter:image:alt" content="Mengram — AI Memory API with semantic, episodic, and procedural memory">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cpath d='M60 16 Q92 16 96 48 Q100 78 72 88 Q50 96 38 76 Q26 58 46 46 Q62 38 70 52 Q76 64 62 68' fill='none' stroke='%23a855f7' stroke-width='10' stroke-linecap='round'/%3E%3Ccircle cx='62' cy='68' r='10' fill='%23a855f7'/%3E%3Ccircle cx='62' cy='68' r='4.5' fill='%23fff'/%3E%3C/svg%3E">
@@ -1487,7 +1487,7 @@
                         "name": "How do I add memory to Claude Code?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "Install Mengram (pip install mengram-ai), set your API key (export MENGRAM_API_KEY=om-...), and run 'mengram hook install'. This installs 3 Claude Code hooks: auto-save (saves conversations after responses), auto-recall (searches memory on every prompt), and session context (loads your cognitive profile on start). Zero manual effort — Claude just remembers."
+                            "text": "Run 'pip install mengram-ai' then 'mengram setup'. This creates your account, saves your API key, and installs 3 Claude Code hooks: auto-save (saves conversations after responses), auto-recall (searches memory on every prompt), and session context (loads your cognitive profile on start). Zero manual effort — Claude just remembers."
                         }
                     },
                     {
@@ -2788,7 +2788,7 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
                         </div>
 
                         <div class="setup-steps">
-                            <h4>Get started in 3 steps:</h4>
+                            <h4>Get started in 2 steps:</h4>
                             <div class="setup-step">
                                 <span class="step-num">1</span>
                                 <div class="step-content">
@@ -2802,22 +2802,12 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
                             <div class="setup-step">
                                 <span class="step-num">2</span>
                                 <div class="step-content">
-                                    <div class="step-label">Set your key</div>
+                                    <div class="step-label">Setup (saves key + installs hooks)</div>
                                     <div class="step-cmd">
-                                        <code>export MENGRAM_API_KEY=${data.api_key}</code>
+                                        <code>mengram setup</code>
                                         <button onclick="copyCmd(this)">Copy</button>
                                     </div>
-                                    <div class="step-tip">Add to ~/.zshrc or ~/.bashrc to persist across sessions</div>
-                                </div>
-                            </div>
-                            <div class="setup-step">
-                                <span class="step-num">3</span>
-                                <div class="step-content">
-                                    <div class="step-label">Enable Claude Code auto-memory</div>
-                                    <div class="step-cmd">
-                                        <code>mengram hook install</code>
-                                        <button onclick="copyCmd(this)">Copy</button>
-                                    </div>
+                                    <div class="step-tip">Already have a key? Use: <code>export MENGRAM_API_KEY=${data.api_key}</code></div>
                                 </div>
                             </div>
                         </div>

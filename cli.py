@@ -771,7 +771,8 @@ def cmd_hook_install(args):
     api_key = os.environ.get("MENGRAM_API_KEY", "")
     if not api_key:
         print("Set MENGRAM_API_KEY environment variable first", file=sys.stderr)
-        print("Get a free key at: https://mengram.io/#signup", file=sys.stderr)
+        print("Run 'mengram setup' to create an account and configure automatically", file=sys.stderr)
+        print("Or get a key at: https://mengram.io/#signup", file=sys.stderr)
         sys.exit(1)
 
     every = getattr(args, "every", 3) or 3

@@ -34,13 +34,14 @@ m.procedures(query="deploy")            # → workflows that evolve from failure
 
 ## Claude Code — Zero-Config Memory
 
-One command. Claude Code remembers everything across sessions automatically.
+Two commands. Claude Code remembers everything across sessions automatically.
 
 ```bash
 pip install mengram-ai
-export MENGRAM_API_KEY=om-...    # Free key → mengram.io
-mengram hook install
+mengram setup              # Sign up + install hooks (interactive)
 ```
+
+Or manually: `export MENGRAM_API_KEY=om-...` → `mengram hook install`
 
 What happens:
 
@@ -79,13 +80,19 @@ Every AI memory tool stores facts. Mengram stores **3 types of memory** — and 
 
 ## Get Started in 30 Seconds
 
-**1. Get a free API key** at [mengram.io](https://mengram.io/#signup) (email or GitHub)
-
-**2. Install**
+**1. Install**
 
 ```bash
 pip install mengram-ai
 ```
+
+**2. Setup** (creates account + installs Claude Code hooks)
+
+```bash
+mengram setup
+```
+
+Or get a key manually at [mengram.io](https://mengram.io/#signup) and `export MENGRAM_API_KEY=om-...`
 
 **3. Use**
 
