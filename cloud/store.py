@@ -2835,7 +2835,7 @@ SEMANTIC MEMORY (facts about the user):
                 model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": prompt}],
                 max_completion_tokens=500,
-                temperature=0.3,
+                temperature=1,
             )
 
             system_prompt = resp.choices[0].message.content.strip()
@@ -2959,7 +2959,7 @@ REFLECTIONS/PATTERNS:
                 model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": prompt}],
                 max_completion_tokens=2000,
-                temperature=0.3,
+                temperature=1,
             )
             content = resp.choices[0].message.content.strip()
 

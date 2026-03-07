@@ -373,7 +373,7 @@ Be strict — only include entities that directly answer or relate to the query.
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_completion_tokens=100,
-                temperature=0,
+                temperature=1,
             )
 
             text = resp.choices[0].message.content.strip()
