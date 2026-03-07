@@ -3472,32 +3472,79 @@ a{{display:block;padding:10px 20px;border-radius:8px;text-decoration:none;font-s
 <title>Mengram — Account created</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh}}
-.card{{background:#141414;border:1px solid #2a2a2a;border-radius:16px;padding:40px;max-width:480px;width:100%;text-align:center}}
-h1{{font-size:22px;margin-bottom:8px;color:#e8e8f0}}
-.sub{{color:#888;font-size:14px;margin-bottom:24px}}
-.key-box{{background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:20px 0;text-align:center}}
-.key-label{{color:#8888a8;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}}
-.key-val{{font-family:'JetBrains Mono',monospace;font-size:14px;color:#a78bfa;word-break:break-all}}
-.warn{{color:#ef4444;font-size:13px;font-weight:600;margin:12px 0}}
-.copy-btn{{padding:10px 20px;background:#a855f7;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;margin:8px 4px;width:100%}}
-.copy-btn:hover{{background:#9333ea}}
-.dash-btn{{padding:10px 20px;background:#1a1a2e;color:#a78bfa;border:1px solid #2a2a3e;border-radius:8px;cursor:pointer;font-size:14px;margin:8px 4px;width:100%;text-decoration:none;display:inline-block}}
-.dash-btn:hover{{background:#22223a}}
+body{{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}}
+.card{{background:#141414;border:1px solid #2a2a2a;border-radius:16px;padding:40px;max-width:520px;width:100%}}
+h1{{font-size:22px;margin-bottom:8px;color:#34d399;text-align:center}}
+.sub{{color:#888;font-size:14px;margin-bottom:24px;text-align:center}}
+.key-box{{background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:14px;margin:16px 0;display:flex;align-items:center;gap:8px}}
+.key-val{{font-family:'JetBrains Mono',monospace;font-size:13px;color:#a78bfa;word-break:break-all;flex:1}}
+.key-box button,.step-cmd button{{background:#1a1a2e;border:1px solid #2a2a3e;color:#888;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap}}
+.key-box button:hover,.step-cmd button:hover{{background:#22223a}}
+.warn{{color:#888;font-size:12px;margin-bottom:20px;text-align:center}}
+.steps-title{{font-size:16px;font-weight:600;color:#e8e8f0;margin-bottom:16px}}
+.setup-step{{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}}
+.step-num{{background:#a855f7;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;margin-top:2px}}
+.step-content{{flex:1;min-width:0}}
+.step-label{{color:#e8e8f0;font-weight:600;margin-bottom:4px;font-size:14px}}
+.step-cmd{{display:flex;align-items:center;background:#0d0d0d;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 10px;gap:8px}}
+.step-cmd code{{flex:1;font-family:'JetBrains Mono',monospace;font-size:12px;color:#34d399;word-break:break-all}}
+.step-tip{{color:#666;font-size:12px;margin-top:4px}}
+.bottom-tip{{color:#666;font-size:13px;margin:16px 0;text-align:center}}
+.btns{{display:flex;gap:10px;margin-top:16px}}
+.btn-pri{{flex:1;padding:10px;background:#a855f7;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;text-decoration:none;text-align:center}}
+.btn-pri:hover{{background:#9333ea}}
+.btn-sec{{flex:1;padding:10px;background:#1a1a2e;color:#a78bfa;border:1px solid #2a2a3e;border-radius:8px;font-size:14px;text-decoration:none;text-align:center}}
+.btn-sec:hover{{background:#22223a}}
 </style></head><body>
 <div class="card">
-<h1>&#10003; Account created!</h1>
+<h1>Account created!</h1>
 <p class="sub">{email}</p>
+<p style="color:#888;font-size:13px;margin-bottom:4px;">Your API key (save it — won't be shown again):</p>
 <div class="key-box">
-<p class="key-label">Your API Key</p>
-<p class="key-val" id="api-key">{api_key}</p>
+<span class="key-val" id="api-key">{api_key}</span>
+<button onclick="cc(this,'{api_key}')">Copy</button>
 </div>
-<p class="warn">Save this key — it won't be shown again.</p>
-<button class="copy-btn" onclick="navigator.clipboard.writeText('{api_key}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy Key',2000)">Copy Key</button>
-<a class="dash-btn" href="/dashboard">Open Console →</a>
-<p style="color:#555;font-size:12px;margin-top:16px">Key also sent to {email}</p>
+<p class="warn">Key also sent to {email}</p>
+
+<p class="steps-title">Get started in 3 steps:</p>
+
+<div class="setup-step">
+<span class="step-num">1</span>
+<div class="step-content">
+<div class="step-label">Install</div>
+<div class="step-cmd"><code>pip install mengram-ai</code><button onclick="cx(this)">Copy</button></div>
 </div>
-<script>localStorage.setItem('mengram_key','{api_key}')</script>
+</div>
+
+<div class="setup-step">
+<span class="step-num">2</span>
+<div class="step-content">
+<div class="step-label">Set your key</div>
+<div class="step-cmd"><code>export MENGRAM_API_KEY={api_key}</code><button onclick="cx(this)">Copy</button></div>
+<div class="step-tip">Add to ~/.zshrc or ~/.bashrc to persist</div>
+</div>
+</div>
+
+<div class="setup-step">
+<span class="step-num">3</span>
+<div class="step-content">
+<div class="step-label">Enable Claude Code auto-memory</div>
+<div class="step-cmd"><code>mengram hook install</code><button onclick="cx(this)">Copy</button></div>
+</div>
+</div>
+
+<p class="bottom-tip">Restart Claude Code — it now remembers everything across sessions.</p>
+
+<div class="btns">
+<a class="btn-pri" href="/dashboard">Open Console</a>
+<a class="btn-sec" href="https://docs.mengram.io/claude-code">Full Guide</a>
+</div>
+</div>
+<script>
+localStorage.setItem('mengram_key','{api_key}');
+function cc(b,t){{navigator.clipboard.writeText(t);b.textContent='Copied!';setTimeout(()=>b.textContent='Copy',1500)}}
+function cx(b){{const c=b.parentElement.querySelector('code').textContent;navigator.clipboard.writeText(c);b.textContent='Copied!';setTimeout(()=>b.textContent='Copy',1500)}}
+</script>
 </body></html>"""
 
     def _github_error_page(message: str) -> str:

@@ -804,6 +804,83 @@
             color: var(--text-3);
         }
 
+        /* ---- Post-signup setup steps ---- */
+        .setup-steps {
+            margin-top: 20px;
+            text-align: left;
+        }
+        .setup-steps h4 {
+            color: var(--text);
+            margin-bottom: 12px;
+            font-size: 1rem;
+        }
+        .setup-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .step-num {
+            background: var(--purple);
+            color: #fff;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 700;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .step-content {
+            flex: 1;
+            min-width: 0;
+        }
+        .step-label {
+            color: var(--text);
+            font-weight: 600;
+            margin-bottom: 4px;
+            font-size: 0.9rem;
+        }
+        .step-cmd {
+            display: flex;
+            align-items: center;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 6px 10px;
+            gap: 8px;
+        }
+        .step-cmd code {
+            flex: 1;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--green);
+            word-break: break-all;
+        }
+        .step-cmd button {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            color: var(--text-2);
+            padding: 3px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            flex-shrink: 0;
+            font-family: 'Sora', sans-serif;
+            white-space: nowrap;
+        }
+        .step-cmd button:hover {
+            background: rgba(255,255,255,0.12);
+        }
+        .step-tip {
+            color: var(--text-3);
+            font-size: 0.78rem;
+            margin-top: 4px;
+        }
+
         /* ---- Footer ---- */
         footer {
             padding: 40px 0;
@@ -2701,17 +2778,55 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
                     result.className = "signup-result show success";
                     localStorage.setItem('mengram_key', data.api_key);
                     result.innerHTML = `
-                        <strong style="color: var(--green);">✅ Account created!</strong>
+                        <strong style="color: var(--green);">Account created!</strong>
                         <p style="margin-top:8px; color: var(--text-2); font-size:14px;">
-                            Save your API key — it won't be shown again:
+                            Your API key (save it — won't be shown again):
                         </p>
                         <div class="api-key-display">
                             <span id="api-key-text">${data.api_key}</span>
                             <button onclick="copyKey()">Copy</button>
                         </div>
+
+                        <div class="setup-steps">
+                            <h4>Get started in 3 steps:</h4>
+                            <div class="setup-step">
+                                <span class="step-num">1</span>
+                                <div class="step-content">
+                                    <div class="step-label">Install</div>
+                                    <div class="step-cmd">
+                                        <code>pip install mengram-ai</code>
+                                        <button onclick="copyCmd(this)">Copy</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setup-step">
+                                <span class="step-num">2</span>
+                                <div class="step-content">
+                                    <div class="step-label">Set your key</div>
+                                    <div class="step-cmd">
+                                        <code>export MENGRAM_API_KEY=${data.api_key}</code>
+                                        <button onclick="copyCmd(this)">Copy</button>
+                                    </div>
+                                    <div class="step-tip">Add to ~/.zshrc or ~/.bashrc to persist across sessions</div>
+                                </div>
+                            </div>
+                            <div class="setup-step">
+                                <span class="step-num">3</span>
+                                <div class="step-content">
+                                    <div class="step-label">Enable Claude Code auto-memory</div>
+                                    <div class="step-cmd">
+                                        <code>mengram hook install</code>
+                                        <button onclick="copyCmd(this)">Copy</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <p class="step-tip" style="margin-top:16px;">Restart Claude Code — it now remembers everything across sessions.</p>
+
                         <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;">
-                            <a href="#install" class="btn btn-primary" style="padding:10px 18px; font-size:13px;">⚡ Get Started</a>
-                            <a href="/dashboard" class="btn btn-secondary" style="padding:10px 18px; font-size:13px;">📊 Open Console</a>
+                            <a href="/dashboard" class="btn btn-primary" style="padding:10px 18px; font-size:13px;">Open Console</a>
+                            <a href="https://docs.mengram.io/claude-code" class="btn btn-secondary" style="padding:10px 18px; font-size:13px;">Full Guide</a>
                         </div>
                     `;
                 } else {
@@ -2733,6 +2848,14 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
             const btn = event.target;
             btn.textContent = "Copied!";
             setTimeout(() => btn.textContent = "Copy", 2000);
+        }
+
+        function copyCmd(btn) {
+            const code = btn.parentElement.querySelector('code').textContent;
+            navigator.clipboard.writeText(code);
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => btn.textContent = orig, 1500);
         }
 
         document.getElementById("email-input").addEventListener("keydown", e => {
