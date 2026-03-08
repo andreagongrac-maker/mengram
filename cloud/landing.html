@@ -989,6 +989,14 @@
             font-weight: 600;
             font-size: 12px;
         }
+        .price-features li.excluded {
+            color: var(--text-2);
+            opacity: 0.5;
+        }
+        .price-features li.excluded::before {
+            content: '\2715';
+            color: var(--text-2);
+        }
         .price-btn {
             display: block;
             width: 100%;
@@ -2335,6 +2343,8 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
                         <li>3 sub-users</li>
                         <li>30 req/min rate limit</li>
                         <li>Vector search (no reranking)</li>
+                        <li class="excluded">No procedure evolution</li>
+                        <li class="excluded">No smart triggers</li>
                     </ul>
                     <a href="#signup" class="price-btn">Get started free</a>
                 </div>
@@ -2351,6 +2361,8 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
                         <li>50 sub-users</li>
                         <li>120 req/min rate limit</li>
                         <li>LLM-powered reranking</li>
+                        <li>Procedure evolution</li>
+                        <li>Smart triggers</li>
                         <li>10 webhooks</li>
                         <li>5 teams</li>
                     </ul>
@@ -2368,6 +2380,8 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
                         <li>Unlimited sub-users</li>
                         <li>300 req/min rate limit</li>
                         <li>Cohere cross-encoder reranking</li>
+                        <li>Procedure evolution</li>
+                        <li>Smart triggers</li>
                         <li>50 webhooks</li>
                         <li>Unlimited teams</li>
                     </ul>
