@@ -592,10 +592,10 @@ Be strict — only include entities that directly answer or relate to the query.
             else:
                 html = f"""
             <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:40px 24px;color:#e8e8f0;background:#0a0a12;border-radius:16px">
-                <div style="text-align:center;margin-bottom:32px">
-                    <svg width="36" height="36" viewBox="0 0 120 120"><path d="M60 16 Q92 16 96 48 Q100 78 72 88 Q50 96 38 76 Q26 58 46 46 Q62 38 70 52 Q76 64 62 68" fill="none" stroke="#a855f7" stroke-width="8" stroke-linecap="round"/><circle cx="62" cy="68" r="8" fill="#a855f7"/><circle cx="62" cy="68" r="3.5" fill="white"/></svg>
-                    <h1 style="font-size:22px;font-weight:700;margin:8px 0 4px;color:#e8e8f0">Welcome to Mengram</h1>
-                    <p style="color:#8888a8;font-size:14px;margin:0">AI memory for your apps — your agents will remember everything.</p>
+                <div style="margin-bottom:28px">
+                    <p style="font-size:15px;color:#c8c8d8;margin:0 0 4px">Hey,</p>
+                    <p style="font-size:15px;color:#c8c8d8;margin:0 0 16px;line-height:1.6">Ali here, founder of Mengram. Thanks for signing up!</p>
+                    <p style="font-size:15px;color:#e8e8f0;margin:0;line-height:1.6">You explain the same things to AI every day. Your stack. Your bugs. Your preferences. <strong style="color:#a855f7">Mengram remembers so you don't have to.</strong></p>
                 </div>
 
                 <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:18px;margin:20px 0;text-align:center">
@@ -605,48 +605,35 @@ Be strict — only include entities that directly answer or relate to the query.
                 <p style="font-size:13px;color:#ef4444;font-weight:600">Save this key — it won't be shown again.</p>
 
                 <div style="margin:28px 0">
-                    <p style="font-size:16px;font-weight:600;color:#e8e8f0;margin:0 0 16px">Get started:</p>
+                    <p style="font-size:15px;font-weight:600;color:#e8e8f0;margin:0 0 12px">Get started:</p>
 
-                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px;margin:0 0 12px">
+                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px;margin:0 0 10px">
                         <code style="color:#22c55e;font-size:13px">pip install mengram-ai</code>
                     </div>
-
-                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px;margin:0 0 6px">
-                        <code style="color:#22c55e;font-size:13px">export MENGRAM_API_KEY={api_key}</code>
+                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px">
+                        <code style="color:#22c55e;font-size:13px">mengram setup --key {api_key}</code>
                     </div>
-                    <p style="color:#8888a8;font-size:12px;margin:0 0 16px">Add to <code style="color:#a78bfa">~/.zshrc</code> or <code style="color:#a78bfa">~/.bashrc</code> to persist across sessions.</p>
+                    <p style="color:#8888a8;font-size:12px;margin:8px 0 0">Saves your key to shell profile and installs Claude Code hooks. Done.</p>
                 </div>
 
                 <div style="margin:28px 0">
-                    <p style="font-size:15px;font-weight:600;color:#e8e8f0;margin:0 0 12px">Use with:</p>
-
-                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px;margin:0 0 10px">
-                        <p style="color:#e8e8f0;font-size:13px;font-weight:600;margin:0 0 6px">Claude Code — auto-memory hooks</p>
-                        <code style="color:#22c55e;font-size:13px">mengram setup</code>
-                        <p style="color:#8888a8;font-size:12px;margin:6px 0 0">Saves key, installs 3 hooks (auto-save, auto-recall, profile). Restart Claude Code — done.</p>
-                    </div>
-
-                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px;margin:0 0 10px">
-                        <p style="color:#e8e8f0;font-size:13px;font-weight:600;margin:0 0 6px">Python / JavaScript SDK</p>
-                        <code style="color:#22c55e;font-size:13px">from mengram import Mengram</code>
-                        <p style="color:#8888a8;font-size:12px;margin:6px 0 0">Add memories, search, get profiles. <code style="color:#a78bfa">npm install mengram-ai</code> for JS.</p>
-                    </div>
-
-                    <div style="background:#12121e;border:1px solid #1a1a2e;border-radius:10px;padding:16px">
-                        <p style="color:#e8e8f0;font-size:13px;font-weight:600;margin:0 0 6px">MCP Server — Claude Desktop, Cursor, Windsurf</p>
-                        <code style="color:#22c55e;font-size:13px">mengram server --cloud</code>
-                        <p style="color:#8888a8;font-size:12px;margin:6px 0 0">29 memory tools for any MCP-compatible AI editor.</p>
-                    </div>
+                    <p style="font-size:14px;font-weight:600;color:#e8e8f0;margin:0 0 10px">What you can do:</p>
+                    <p style="font-size:13px;color:#c8c8d8;margin:0;line-height:2">
+                        <span style="color:#a855f7">→</span> <strong>Search memories</strong> — <code style="color:#a78bfa">m.search("tech stack")</code><br>
+                        <span style="color:#a855f7">→</span> <strong>3 memory types</strong> — facts, events, workflows that evolve<br>
+                        <span style="color:#a855f7">→</span> <strong>Cognitive Profile</strong> — one call → system prompt for any LLM<br>
+                        <span style="color:#a855f7">→</span> <strong>Import ChatGPT</strong> — <code style="color:#a78bfa">mengram import chatgpt export.zip --cloud</code><br>
+                        <span style="color:#a855f7">→</span> <strong>MCP Server</strong> — Cursor, Windsurf, Claude Desktop<br>
+                        <span style="color:#a855f7">→</span> <strong>Multi-user</strong> — one key, isolated memory per user
+                    </p>
                 </div>
 
                 <hr style="border:none;border-top:1px solid #1a1a2e;margin:28px 0">
-                <p style="font-size:13px;color:#8888a8;text-align:center;margin:0 0 12px">
-                    Need help? Just reply to this email.
-                </p>
+                <p style="font-size:14px;color:#c8c8d8;margin:0 0 16px">Anything doesn't work? Just reply — I read every email.</p>
+                <p style="font-size:14px;color:#c8c8d8;margin:0 0 20px">— Ali</p>
                 <p style="font-size:12px;color:#55556a;text-align:center">
-                    <a href="https://mengram.io/dashboard" style="color:#7c3aed;text-decoration:none">Console</a> ·
                     <a href="https://docs.mengram.io" style="color:#7c3aed;text-decoration:none">Docs</a> ·
-                    <a href="https://docs.mengram.io/claude-code" style="color:#7c3aed;text-decoration:none">Claude Code</a> ·
+                    <a href="https://mengram.io/dashboard" style="color:#7c3aed;text-decoration:none">Dashboard</a> ·
                     <a href="https://github.com/alibaizhanov/mengram" style="color:#7c3aed;text-decoration:none">GitHub</a>
                 </p>
             </div>

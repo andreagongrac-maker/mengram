@@ -677,73 +677,79 @@ def cmd_setup(args):
     """Interactive signup + API key setup + hook install."""
     print("\n  Welcome to Mengram — AI memory for your apps\n")
 
-    # Check existing key
-    existing_key = os.environ.get("MENGRAM_API_KEY", "")
-    if existing_key:
-        answer = input("  Already configured. Reconfigure? [y/N]: ").strip().lower()
-        if answer != "y":
-            print("  Keeping existing configuration.")
-            return
-        print()
-
-    # Get email
-    email = getattr(args, "email", None)
-    if not email:
-        email = input("  Email: ").strip()
-    if not email:
-        print("  Email is required.")
-        return
-
-    # Step 1: Send verification code
-    data, status = _api_request_unauth("POST", "/v1/signup", {"email": email})
-
-    is_reset = False
-    if status == 409:
-        # Already registered — offer key reset
-        print("  Email already registered.")
-        answer = input("  Reset API key? [y/N]: ").strip().lower()
-        if answer != "y":
-            print("\n  To use your existing key:")
-            print('  export MENGRAM_API_KEY="om-your-key"')
-            print("  mengram hook install\n")
-            return
-        data, status = _api_request_unauth("POST", "/v1/reset-key", {"email": email})
-        if status != 200:
-            print(f"  Error: {data.get('detail', 'Unknown error')}")
-            return
-        is_reset = True
-        print("  Verification code sent! Check your inbox.\n")
-    elif status == 200:
-        print("  Verification code sent! Check your inbox.\n")
+    # Fast path: --key flag (for users who already have a key from the website)
+    provided_key = getattr(args, "key", None)
+    if provided_key:
+        api_key = provided_key
+        print(f"  API key: {api_key[:10]}...{api_key[-4:]}")
     else:
-        print(f"  Error: {data.get('detail', 'Cannot connect to mengram.io')}")
-        return
+        # Check existing key
+        existing_key = os.environ.get("MENGRAM_API_KEY", "")
+        if existing_key:
+            answer = input("  Already configured. Reconfigure? [y/N]: ").strip().lower()
+            if answer != "y":
+                print("  Keeping existing configuration.")
+                return
+            print()
 
-    # Step 2: Verify code
-    verify_path = "/v1/reset-key/verify" if is_reset else "/v1/verify"
-    for attempt in range(3):
-        code = input("  Code: ").strip()
-        if not code:
-            continue
-        data, status = _api_request_unauth("POST", verify_path, {"email": email, "code": code})
-        if status == 200:
-            break
-        print(f"  {data.get('detail', 'Invalid code.')} Try again.")
-    else:
-        print("  Too many attempts. Run 'mengram setup' to start over.")
-        return
+        # Get email
+        email = getattr(args, "email", None)
+        if not email:
+            email = input("  Email: ").strip()
+        if not email:
+            print("  Email is required.")
+            return
 
-    api_key = data.get("api_key", "")
-    if not api_key:
-        print("  Error: no API key in response.")
-        return
+        # Step 1: Send verification code
+        data, status = _api_request_unauth("POST", "/v1/signup", {"email": email})
 
-    if is_reset:
-        print("  New API key generated!\n")
-    else:
-        print("  Account created!\n")
+        is_reset = False
+        if status == 409:
+            # Already registered — offer key reset
+            print("  Email already registered.")
+            answer = input("  Reset API key? [y/N]: ").strip().lower()
+            if answer != "y":
+                print("\n  To use your existing key:")
+                print('  export MENGRAM_API_KEY="om-your-key"')
+                print("  mengram hook install\n")
+                return
+            data, status = _api_request_unauth("POST", "/v1/reset-key", {"email": email})
+            if status != 200:
+                print(f"  Error: {data.get('detail', 'Unknown error')}")
+                return
+            is_reset = True
+            print("  Verification code sent! Check your inbox.\n")
+        elif status == 200:
+            print("  Verification code sent! Check your inbox.\n")
+        else:
+            print(f"  Error: {data.get('detail', 'Cannot connect to mengram.io')}")
+            return
 
-    print(f"  API key: {api_key}")
+        # Step 2: Verify code
+        verify_path = "/v1/reset-key/verify" if is_reset else "/v1/verify"
+        for attempt in range(3):
+            code = input("  Code: ").strip()
+            if not code:
+                continue
+            data, status = _api_request_unauth("POST", verify_path, {"email": email, "code": code})
+            if status == 200:
+                break
+            print(f"  {data.get('detail', 'Invalid code.')} Try again.")
+        else:
+            print("  Too many attempts. Run 'mengram setup' to start over.")
+            return
+
+        api_key = data.get("api_key", "")
+        if not api_key:
+            print("  Error: no API key in response.")
+            return
+
+        if is_reset:
+            print("  New API key generated!\n")
+        else:
+            print("  Account created!\n")
+
+        print(f"  API key: {api_key}")
 
     # Save key to shell profile
     profile = _save_api_key(api_key)
@@ -1181,6 +1187,7 @@ def main():
     # setup (interactive signup + hook install)
     p_setup = sub.add_parser("setup", help="Sign up and configure Mengram (interactive)")
     p_setup.add_argument("--email", help="Email (skip prompt)")
+    p_setup.add_argument("--key", help="API key (skip signup, just save key + install hooks)")
     p_setup.add_argument("--no-hooks", action="store_true", help="Skip Claude Code hook install")
 
     args = parser.parse_args()
