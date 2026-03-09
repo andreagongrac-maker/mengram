@@ -121,7 +121,9 @@ class MengramBrain:
 
         # 1. Extract via LLM
         extraction = self.extractor.extract(conversation)
-        print(f"   📊 Found: {len(extraction.entities)} entities, {len(extraction.relations)} relations, {len(extraction.knowledge)} knowledge", file=sys.stderr)
+        print(f"   📊 Found: {len(extraction.entities)} entities, {len(extraction.relations)} relations, "
+              f"{len(extraction.knowledge)} knowledge, {len(extraction.episodes)} episodes, "
+              f"{len(extraction.procedures)} procedures", file=sys.stderr)
 
         # 2. Write to vault
         stats = self.vault_manager.process_extraction(extraction)
@@ -139,6 +141,8 @@ class MengramBrain:
         return {
             "entities_created": stats["created"],
             "entities_updated": stats["updated"],
+            "episodes_saved": stats.get("episodes_saved", 0),
+            "procedures_saved": stats.get("procedures_saved", 0),
             "extraction": extraction,
         }
 
@@ -211,7 +215,15 @@ class MengramBrain:
                 contexts.append(f"**{note.title}**:\n{note.raw_content[:500]}")
 
         if contexts:
-            return "\n\n---\n\n".join(contexts[:top_k])
+            return self._assemble_context(query, contexts)
+
+        # === 4. PROCEDURE SEARCH ===
+        procs = self.vault_manager.search_procedures(query, limit=3)
+        if procs:
+            for p in procs:
+                steps_text = "\n".join(f"  {i+1}. {s.get('action', s.get('step', ''))}" for i, s in enumerate(p.get("steps", [])))
+                contexts.append(f"## Procedure: {p['name']}\nTrigger: {p.get('trigger', 'N/A')}\nSteps:\n{steps_text}")
+            return self._assemble_context(query, contexts)
 
         return f"Nothing found for query: '{query}'"
 
@@ -245,6 +257,30 @@ class MengramBrain:
                         lines.append(f"  ```\n  {k['artifact'][:500]}\n  ```")
 
             lines.append("")
+
+        # Episodes
+        episodes = self.vault_manager.get_episodes(limit=10)
+        if episodes:
+            lines.append("\n# Recent Episodes\n")
+            for ep in episodes:
+                valence = ep.get("emotional_valence", "neutral")
+                lines.append(f"- [{valence}] {ep.get('summary', '?')}")
+                if ep.get("outcome"):
+                    lines.append(f"  Outcome: {ep['outcome']}")
+
+        # Procedures
+        procedures = self.vault_manager.get_procedures(limit=10)
+        if procedures:
+            lines.append("\n# Procedures\n")
+            for proc in procedures:
+                s = proc.get("success_count", 0)
+                f = proc.get("fail_count", 0)
+                lines.append(f"- **{proc.get('name', '?')}** (success: {s}, fail: {f})")
+                if proc.get("trigger"):
+                    lines.append(f"  Trigger: {proc['trigger']}")
+                for i, step in enumerate(proc.get("steps", [])[:5]):
+                    lines.append(f"  {i+1}. {step.get('action', step.get('step', ''))}")
+
         return "\n".join(lines)
 
     def search(self, query: str, top_k: int = 5, graph_depth: int = 2) -> list[dict]:
@@ -351,6 +387,19 @@ class MengramBrain:
                         lines.append(f"- {arrow} {r['type']}: {r['target']}")
                 sections.append("\n".join(lines))
 
+        # Procedures section
+        procedures = self.vault_manager.get_procedures(limit=10)
+        if procedures:
+            sections.append("\n## Learned Procedures")
+            for proc in procedures:
+                s = proc.get("success_count", 0)
+                f = proc.get("fail_count", 0)
+                sections.append(f"\n### {proc.get('name', '?')} (success: {s}, fail: {f})")
+                if proc.get("trigger"):
+                    sections.append(f"Trigger: {proc['trigger']}")
+                for i, step in enumerate(proc.get("steps", [])[:5]):
+                    sections.append(f"{i+1}. {step.get('action', step.get('step', ''))}")
+
         return "\n".join(sections)
 
     def get_recent_knowledge(self, limit: int = 10) -> str:
@@ -377,6 +426,18 @@ class MengramBrain:
             lines.append("")
 
         return "\n".join(lines)
+
+    def get_episodes(self, limit: int = 20) -> list[dict]:
+        return self.vault_manager.get_episodes(limit)
+
+    def get_procedures(self, limit: int = 20) -> list[dict]:
+        return self.vault_manager.get_procedures(limit)
+
+    def search_procedures(self, query: str, limit: int = 10) -> list[dict]:
+        return self.vault_manager.search_procedures(query, limit)
+
+    def procedure_feedback(self, name: str, success: bool) -> bool:
+        return self.vault_manager.procedure_feedback(name, success)
 
     def get_stats(self) -> dict:
         vault_stats = self.vault_manager.get_vault_stats()

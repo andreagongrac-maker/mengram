@@ -143,6 +143,12 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
                 description="Most recent knowledge entries — solutions, insights, commands.",
                 mimeType="text/markdown",
             ),
+            Resource(
+                uri="memory://procedures",
+                name="Learned Procedures",
+                description="All learned procedures (workflows, skills) with success/fail stats.",
+                mimeType="text/markdown",
+            ),
         ]
 
     @server.list_resource_templates()
@@ -165,6 +171,21 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
 
         elif uri_str == "memory://recent":
             return brain.get_recent_knowledge(limit=10)
+
+        elif uri_str == "memory://procedures":
+            procs = brain.get_procedures(limit=50)
+            if not procs:
+                return "No procedures learned yet."
+            lines = ["# Learned Procedures\n"]
+            for p in procs:
+                s, f = p.get("success_count", 0), p.get("fail_count", 0)
+                lines.append(f"## {p.get('name', '?')} (success: {s}, fail: {f})")
+                if p.get("trigger"):
+                    lines.append(f"Trigger: {p['trigger']}")
+                for i, step in enumerate(p.get("steps", [])):
+                    lines.append(f"{i+1}. {step.get('action', step.get('step', ''))}")
+                lines.append("")
+            return "\n".join(lines)
 
         elif uri_str.startswith("memory://entity/"):
             entity_name = unquote(uri_str.replace("memory://entity/", ""))
@@ -273,6 +294,49 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
                 description="Vault statistics.",
                 inputSchema={"type": "object", "properties": {}},
             ),
+            Tool(
+                name="list_episodes",
+                description="List recent episodic memories — events, experiences, outcomes.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Max episodes to return", "default": 10},
+                    },
+                },
+            ),
+            Tool(
+                name="list_procedures",
+                description="List learned procedures (workflows, skills) with success/fail stats.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Max procedures to return", "default": 10},
+                    },
+                },
+            ),
+            Tool(
+                name="search_procedures",
+                description="Search procedures by name, trigger, or step content.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="procedure_feedback",
+                description="Report success or failure of a procedure. Tracks reliability over time.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Procedure name"},
+                        "success": {"type": "boolean", "description": "True if it worked, false if it failed"},
+                    },
+                    "required": ["name", "success"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -282,6 +346,8 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
                 result = brain.remember(arguments["conversation"])
                 extraction = result.get("extraction")
                 k_count = len(extraction.knowledge) if extraction and hasattr(extraction, "knowledge") else 0
+                ep_count = result.get("episodes_saved", 0)
+                proc_count = result.get("procedures_saved", 0)
                 text = (
                     f"✅ Remembered!\n"
                     f"Created: {', '.join(result['entities_created']) or 'none'}\n"
@@ -289,6 +355,10 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
                 )
                 if k_count:
                     text += f"\nKnowledge entries: {k_count}"
+                if ep_count:
+                    text += f"\nEpisodes saved: {ep_count}"
+                if proc_count:
+                    text += f"\nProcedures saved: {proc_count}"
                 # Notify resource update
                 try:
                     await server.request_context.session.send_resource_updated(uri="memory://profile")
@@ -333,6 +403,36 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
                     type="text",
                     text=json.dumps(stats, ensure_ascii=False, indent=2, default=str),
                 )]
+
+            elif name == "list_episodes":
+                limit = arguments.get("limit", 10)
+                episodes = brain.get_episodes(limit)
+                return [TextContent(
+                    type="text",
+                    text=json.dumps(episodes, ensure_ascii=False, indent=2, default=str),
+                )]
+
+            elif name == "list_procedures":
+                limit = arguments.get("limit", 10)
+                procs = brain.get_procedures(limit)
+                return [TextContent(
+                    type="text",
+                    text=json.dumps(procs, ensure_ascii=False, indent=2, default=str),
+                )]
+
+            elif name == "search_procedures":
+                results = brain.search_procedures(arguments["query"])
+                return [TextContent(
+                    type="text",
+                    text=json.dumps(results, ensure_ascii=False, indent=2, default=str),
+                )]
+
+            elif name == "procedure_feedback":
+                ok = brain.procedure_feedback(arguments["name"], arguments["success"])
+                if ok:
+                    status = "succeeded" if arguments["success"] else "failed"
+                    return [TextContent(type="text", text=f"✅ Recorded: '{arguments['name']}' {status}")]
+                return [TextContent(type="text", text=f"❌ Procedure '{arguments['name']}' not found")]
 
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

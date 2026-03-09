@@ -311,6 +311,21 @@ class Memory:
             return {"center": None, "nodes": [], "edges": []}
         return brain.graph.get_subgraph(entity.id, depth=depth)
 
+    def episodes(self, user_id: str = "default", limit: int = 20) -> list[dict]:
+        """List episodic memories (events, experiences, outcomes)."""
+        brain = self._get_brain(user_id)
+        return brain.get_episodes(limit)
+
+    def procedures(self, user_id: str = "default", limit: int = 20) -> list[dict]:
+        """List procedural memories (workflows, skills) with success/fail stats."""
+        brain = self._get_brain(user_id)
+        return brain.get_procedures(limit)
+
+    def procedure_feedback(self, name: str, success: bool, user_id: str = "default") -> bool:
+        """Report success or failure of a procedure."""
+        brain = self._get_brain(user_id)
+        return brain.procedure_feedback(name, success)
+
     def _extract_facts_from_file(self, file_path: Optional[str]) -> list[str]:
         """Extract facts from .md file"""
         if not file_path:

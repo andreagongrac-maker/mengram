@@ -6,9 +6,15 @@ Sections in .md file:
   ## Facts — short facts
   ## Relations — connections to other entities
   ## Knowledge — solutions, formulas, recipes, configs (with artifacts)
+
+Also persists:
+  .episodes.json — episodic memory (events, experiences)
+  .procedures.json — procedural memory (workflows, skills)
 """
 
 import re
+import json
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -21,6 +27,8 @@ from engine.extractor.conversation_extractor import (
     ExtractedFact,
     ExtractedRelation,
     ExtractedKnowledge,
+    ExtractedEpisode,
+    ExtractedProcedure,
 )
 
 
@@ -85,6 +93,16 @@ class VaultManager:
                         self._create_note(file_path, stub, [], [])
                         stats["created"].append(name)
                         all_entity_names.add(name)
+
+        # 4. Save episodes
+        if extraction.episodes:
+            saved = self._save_episodes(extraction.episodes)
+            stats["episodes_saved"] = saved
+
+        # 5. Save procedures
+        if extraction.procedures:
+            saved = self._save_procedures(extraction.procedures)
+            stats["procedures_saved"] = saved
 
         return stats
 
@@ -344,6 +362,127 @@ class VaultManager:
                 return True
         return False
 
+    # --- Episodes & Procedures persistence ---
+
+    def _episodes_path(self) -> Path:
+        return self.vault_path / ".episodes.json"
+
+    def _procedures_path(self) -> Path:
+        return self.vault_path / ".procedures.json"
+
+    def _load_json(self, path: Path) -> list:
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return []
+        return []
+
+    def _save_json(self, path: Path, data: list):
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+    def _save_episodes(self, episodes: list[ExtractedEpisode]) -> int:
+        existing = self._load_json(self._episodes_path())
+        existing_summaries = {e.get("summary", "").lower() for e in existing}
+        saved = 0
+        for ep in episodes:
+            if ep.summary.lower() in existing_summaries:
+                continue
+            existing.append({
+                "id": str(uuid.uuid4()),
+                "summary": ep.summary,
+                "context": ep.context,
+                "outcome": ep.outcome,
+                "participants": ep.participants,
+                "emotional_valence": ep.emotional_valence,
+                "importance": ep.importance,
+                "happened_at": ep.happened_at,
+                "created_at": datetime.now().isoformat(),
+            })
+            existing_summaries.add(ep.summary.lower())
+            saved += 1
+        if saved:
+            self._save_json(self._episodes_path(), existing)
+        return saved
+
+    def _save_procedures(self, procedures: list[ExtractedProcedure]) -> int:
+        existing = self._load_json(self._procedures_path())
+        existing_by_name = {p.get("name", "").lower(): i for i, p in enumerate(existing)}
+        saved = 0
+        for proc in procedures:
+            key = proc.name.lower()
+            if key in existing_by_name:
+                # Merge: update steps if new version has more
+                idx = existing_by_name[key]
+                if len(proc.steps) > len(existing[idx].get("steps", [])):
+                    existing[idx]["steps"] = proc.steps
+                    existing[idx]["trigger"] = proc.trigger or existing[idx].get("trigger", "")
+                    existing[idx]["entities"] = list(set(existing[idx].get("entities", []) + proc.entities))
+                    existing[idx]["updated_at"] = datetime.now().isoformat()
+            else:
+                existing.append({
+                    "id": str(uuid.uuid4()),
+                    "name": proc.name,
+                    "trigger": proc.trigger,
+                    "steps": proc.steps,
+                    "entities": proc.entities,
+                    "success_count": 0,
+                    "fail_count": 0,
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                })
+                existing_by_name[key] = len(existing) - 1
+            saved += 1
+        if saved:
+            self._save_json(self._procedures_path(), existing)
+        return saved
+
+    def get_episodes(self, limit: int = 20) -> list[dict]:
+        episodes = self._load_json(self._episodes_path())
+        episodes.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+        return episodes[:limit]
+
+    def get_procedures(self, limit: int = 20) -> list[dict]:
+        procedures = self._load_json(self._procedures_path())
+        procedures.sort(key=lambda p: p.get("updated_at", p.get("created_at", "")), reverse=True)
+        return procedures[:limit]
+
+    def search_episodes(self, query: str, limit: int = 10) -> list[dict]:
+        query_lower = query.lower()
+        episodes = self._load_json(self._episodes_path())
+        results = []
+        for ep in episodes:
+            text = f"{ep.get('summary', '')} {ep.get('context', '')} {ep.get('outcome', '')}".lower()
+            if query_lower in text:
+                results.append(ep)
+        results.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+        return results[:limit]
+
+    def search_procedures(self, query: str, limit: int = 10) -> list[dict]:
+        query_lower = query.lower()
+        procedures = self._load_json(self._procedures_path())
+        results = []
+        for proc in procedures:
+            text = f"{proc.get('name', '')} {proc.get('trigger', '')}".lower()
+            steps_text = " ".join(s.get("action", "") + " " + s.get("detail", "") for s in proc.get("steps", []))
+            if query_lower in text or query_lower in steps_text.lower():
+                results.append(proc)
+        results.sort(key=lambda p: p.get("updated_at", p.get("created_at", "")), reverse=True)
+        return results[:limit]
+
+    def procedure_feedback(self, name: str, success: bool) -> bool:
+        procedures = self._load_json(self._procedures_path())
+        for proc in procedures:
+            if proc.get("name", "").lower() == name.lower():
+                if success:
+                    proc["success_count"] = proc.get("success_count", 0) + 1
+                else:
+                    proc["fail_count"] = proc.get("fail_count", 0) + 1
+                proc["last_used"] = datetime.now().isoformat()
+                self._save_json(self._procedures_path(), procedures)
+                return True
+        return False
+
     def get_vault_stats(self) -> dict:
         files = list(self.vault_path.glob("*.md"))
         types = {}
@@ -358,6 +497,8 @@ class VaultManager:
             "total_notes": len(files),
             "by_type": types,
             "knowledge_entries": knowledge_count,
+            "episodes": len(self._load_json(self._episodes_path())),
+            "procedures": len(self._load_json(self._procedures_path())),
         }
 
     def list_notes(self) -> list[str]:

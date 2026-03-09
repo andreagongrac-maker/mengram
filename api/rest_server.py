@@ -281,6 +281,26 @@ def create_rest_api(brain: MengramBrain) -> "FastAPI":
         """Recent knowledge entries across all entities."""
         return {"knowledge": brain.get_recent_knowledge(limit=limit)}
 
+    # --- Episodes & Procedures ---
+
+    @app.get("/api/episodes")
+    async def get_episodes(limit: int = 20):
+        """List recent episodic memories."""
+        return {"episodes": brain.get_episodes(limit)}
+
+    @app.get("/api/procedures")
+    async def get_procedures(limit: int = 20):
+        """List learned procedures with success/fail stats."""
+        return {"procedures": brain.get_procedures(limit)}
+
+    @app.post("/api/procedures/{name}/feedback")
+    async def procedure_feedback(name: str, success: bool = True):
+        """Report success or failure of a procedure."""
+        ok = brain.procedure_feedback(name, success)
+        if not ok:
+            raise HTTPException(status_code=404, detail=f"Procedure '{name}' not found")
+        return {"status": "ok", "name": name, "success": success}
+
     # --- Stats ---
 
     @app.get("/api/stats", response_model=StatsResponse)
