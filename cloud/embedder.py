@@ -59,6 +59,9 @@ class CloudEmbedder:
 
     def embed_batch(self, texts: list[str], max_retries: int = 3) -> list[list[float]]:
         """Generate embeddings for multiple texts with retry and backoff for rate limits."""
+        # Sanitize: empty/None → single space (OpenAI returns 400 on empty input)
+        texts = [t if t else " " for t in texts]
+
         payload = {
             "model": self.model,
             "input": texts,
@@ -89,8 +92,10 @@ class CloudEmbedder:
 
             except Exception as e:
                 is_rate_limit = "429" in str(e)
+                is_bad_request = "400" in str(e)
+                if is_bad_request and attempt == 0:
+                    logger.error(f"Embedding 400 debug: {len(texts)} texts, lengths={[len(t) for t in texts]}, first_100={[t[:100] for t in texts[:3]]}")
                 if attempt < max_retries:
-                    # Short backoff to stay within worker timeout (~30s total)
                     wait = 2 * (attempt + 1) if not is_rate_limit else 3 * (attempt + 1)
                     logger.warning(f"Embedding attempt {attempt + 1} failed: {e}, retrying in {wait}s")
                     time.sleep(wait)

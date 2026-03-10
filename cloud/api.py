@@ -370,13 +370,16 @@ If none are relevant, return [].
 Be strict — only include entities that directly answer or relate to the query."""
 
             resp = client.chat.completions.create(
-                model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+                model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_completion_tokens=100,
-                temperature=1,
+                temperature=0,
             )
 
-            text = resp.choices[0].message.content.strip()
+            text = (resp.choices[0].message.content or "").strip()
+            if not text:
+                return results
+
             import json as json_mod
             if "```" in text:
                 text = text.split("```")[1].replace("json", "").strip()
@@ -390,7 +393,7 @@ Be strict — only include entities that directly answer or relate to the query.
             return results
 
         except Exception as e:
-            logger.error(f"⚠️ Re-ranking failed, returning raw results: {e}")
+            logger.debug(f"LLM rerank skipped, using raw results: {e}")
             return results
 
     # ---- Rate Limiting (Redis-shared or in-memory fallback) ----
