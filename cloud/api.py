@@ -1917,6 +1917,147 @@ mengram setup</code></pre>
 """,
             "related": ["cognitive-profile-system-prompts", "mcp-memory-server-setup"],
         },
+        "autonomous-ai-agent-memory": {
+            "slug": "autonomous-ai-agent-memory",
+            "title": "How to Build AI Agents That Learn From Experience (Persistent Memory Pattern)",
+            "date": "March 10, 2026",
+            "date_iso": "2026-03-10",
+            "read_time": "8",
+            "tags": ["Architecture", "Agents"],
+            "excerpt": "The memory loop pattern for autonomous AI agents: store outcomes, recall before decisions, evolve procedures from failures. With Python examples.",
+            "seo_title": "How to Build AI Agents That Learn From Experience — Persistent Memory Pattern | Mengram",
+            "seo_description": "Learn the memory loop pattern for autonomous AI agents. Store outcomes, recall context before decisions, and auto-evolve procedures from failures. Python tutorial with code examples.",
+            "seo_keywords": "AI agent persistent memory, autonomous AI agent memory, AI agent learns from experience, agent long-term memory, AI agent persistent state, procedural memory AI agent, AI agent failure learning, agent memory loop",
+            "content_html": """
+<h2>The problem with stateless agents</h2>
+<p>Most AI agents are stateless. They complete a task, the session ends, and everything is gone. Next run, the agent starts from zero — making the same mistakes, trying the same failed approaches, with no memory of what worked before.</p>
+<p>This is fine for one-shot tasks. But for <strong>autonomous agents that run repeatedly</strong> — applying to jobs, monitoring systems, processing data, handling support tickets — it's a fundamental limitation. These agents need to <em>learn</em>.</p>
+
+<h2>The memory loop pattern</h2>
+<p>The solution is a three-step loop that runs on every agent cycle:</p>
+
+<pre><code>┌─────────────────────────────────────────────┐
+│  1. RECALL — search memory before acting    │
+│  2. ACT — complete the task                 │
+│  3. REMEMBER — store what happened          │
+└─────────────────────────────────────────────┘</code></pre>
+
+<p>Over time, the agent accumulates experience. Each run builds on the last. Here's how to implement it:</p>
+
+<h3>Step 1: Recall before acting</h3>
+<p>Before your agent starts a task, search memory for relevant context:</p>
+
+<pre><code>from mengram import Mengram
+
+m = Mengram(api_key="om-...")
+
+# Before the agent acts, recall relevant experience
+context = m.search_all("submit application on Greenhouse")
+
+# context now contains:
+# - Facts: "Greenhouse uses React Select for dropdowns"
+# - Episodes: "Application to Acme Corp failed — dropdown selector broke"
+# - Procedures: "Greenhouse apply v3: use aria-label selector instead"</code></pre>
+
+<p>The agent now knows what worked before, what failed, and what strategy to use — without any manual prompting.</p>
+
+<h3>Step 2: Act with context</h3>
+<p>Pass the recalled context to your agent's LLM as part of the system prompt or tool results. The agent uses this experience to make better decisions:</p>
+
+<pre><code># Inject memory into agent's context
+system_prompt = (
+    "You are an autonomous agent.\n"
+    "Here is what you know from past runs:\n"
+    f"{{context}}\n"
+    "Use this to avoid repeating past mistakes."
+)
+
+# Your agent acts with full context of past experience
+response = llm.chat(system_prompt, task_description)</code></pre>
+
+<h3>Step 3: Remember the outcome</h3>
+<p>After the agent completes (or fails) the task, store what happened:</p>
+
+<pre><code># Store the outcome — Mengram auto-extracts facts, episodes, and procedures
+m.add([
+    {{"role": "user", "content": "Apply to Acme Corp on Greenhouse"}},
+    {{"role": "assistant", "content": "Applied successfully. Used aria-label selector for dropdowns. Uploaded resume via base64 file input."}},
+])</code></pre>
+
+<p>One <code>add()</code> call extracts all three memory types automatically — no manual tagging needed.</p>
+
+<h2>The key: procedures that evolve</h2>
+<p>The most powerful part of this pattern is <strong>procedural memory</strong>. When an agent follows a workflow and it fails, the procedure auto-evolves:</p>
+
+<pre><code># Agent tries a procedure and it fails
+m.procedure_feedback(proc_id, success=False,
+                     context="Dropdown selector broke on Greenhouse")
+
+# Mengram evolves the procedure:
+# v1: fill form → submit                           ← FAILED
+# v2: fill form → use aria-label selector → submit  ← SUCCESS</code></pre>
+
+<p>Next time the agent encounters the same task, <code>search_all()</code> returns the evolved v2 procedure. The agent improves without any human intervention.</p>
+
+<p>This also happens automatically — just add conversations that mention failures, and Mengram detects the pattern:</p>
+
+<pre><code>m.add([{{"role": "user", "content": "Greenhouse apply failed — dropdown hack stopped working. Switched to aria-label and it worked."}}])
+# → Episode created → linked to existing procedure → auto-evolved to v2</code></pre>
+
+<h2>Real-world example: autonomous job application agent</h2>
+<p>One of our users built an agent that applies to jobs autonomously. The agent:</p>
+<ol>
+<li>Discovers job postings matching criteria</li>
+<li>Scores them against preferences (role, salary, remote)</li>
+<li>Tailors the resume for each position</li>
+<li>Submits applications through ATS platforms (Greenhouse, Lever)</li>
+<li>Runs 24/7 via cron</li>
+</ol>
+
+<p>Without memory, the agent would forget which companies it already applied to, which form-filling strategies work for which platforms, and what workarounds exist for anti-bot measures.</p>
+
+<p>With Mengram, each run makes the agent smarter. After 50+ applications, it has a library of evolved procedures for different ATS platforms, a history of every outcome, and facts about the user's preferences — all searchable in milliseconds.</p>
+
+<h2>The complete agent loop</h2>
+<pre><code>from mengram import Mengram
+
+m = Mengram(api_key="om-...")
+
+def agent_loop(task: str, user_id: str = "default"):
+    # 1. Recall
+    context = m.search_all(task, user_id=user_id)
+
+    # 2. Act (your agent logic here)
+    result = your_agent.run(task, context=context)
+
+    # 3. Remember
+    m.add([
+        {{"role": "user", "content": task}},
+        {{"role": "assistant", "content": result}},
+    ], user_id=user_id)
+
+    return result
+
+# Run on a schedule — each run builds on the last
+while True:
+    agent_loop("Check for new jobs and apply to top matches")
+    time.sleep(3600)  # every hour</code></pre>
+
+<h2>Works with any framework</h2>
+<p>This pattern works with any agent framework:</p>
+<ul>
+<li><strong>CrewAI</strong> — add Mengram as a tool set (<a href="/blog/ai-memory-for-crewai-langchain">tutorial</a>)</li>
+<li><strong>LangChain</strong> — use MengramRetriever + ChatMessageHistory</li>
+<li><strong>Claude Code</strong> — auto-memory via hooks (<a href="/blog/claude-code-memory-hooks">setup guide</a>)</li>
+<li><strong>Custom loops</strong> — just call <code>add()</code> and <code>search_all()</code></li>
+</ul>
+
+<h2>Get started</h2>
+<pre><code>pip install mengram-ai</code></pre>
+<p>Get a free API key at <a href="/#signup">mengram.io</a>. The recall → act → remember loop takes 10 minutes to set up and your agent starts learning from its first run.</p>
+""",
+            "related": ["how-to-add-memory-to-ai-agents", "semantic-episodic-procedural-memory"],
+        },
     }
 
     @app.get("/blog", response_class=HTMLResponse)
