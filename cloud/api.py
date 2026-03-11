@@ -273,6 +273,27 @@ profile = m.get_profile()             # instant system prompt
     _cohere_client = None
     _openai_rerank_client = None
 
+    def _summarize_for_embedding(text: str, max_chars: int = 1500) -> str:
+        """Summarize long text for embedding. Preserves key facts for search."""
+        if len(text) <= max_chars:
+            return text
+        try:
+            openai_key = os.environ.get("OPENAI_API_KEY", "")
+            if not openai_key:
+                return text[:max_chars]
+            import openai
+            client = openai.OpenAI(api_key=openai_key)
+            resp = client.chat.completions.create(
+                model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+                messages=[{"role": "user", "content": f"Summarize this into a dense, fact-rich paragraph under {max_chars} characters. Keep all key facts, names, technologies, and outcomes:\n\n{text[:30000]}"}],
+                max_completion_tokens=500,
+            )
+            summary = (resp.choices[0].message.content or "").strip()
+            return summary if summary else text[:max_chars]
+        except Exception as e:
+            logger.debug(f"Summarize for embedding failed, truncating: {e}")
+            return text[:max_chars]
+
     def rerank_results(query: str, results: list[dict], plan: str = "business") -> list[dict]:
         """Re-rank search results based on subscription plan.
         Free: no reranking.  Pro: LLM rerank.  Business: Cohere Rerank → LLM fallback."""
@@ -4151,7 +4172,8 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                             if target and rel_type:
                                 chunks.append(f"{name} {rel_type} {target}")
                         for k in entity_knowledge:
-                            chunks.append(f"{k['title']} {k['content']}")
+                            kt = f"{k['title']} {k['content']}"
+                            chunks.append(_summarize_for_embedding(kt) if len(kt) > 2000 else kt)
                         embedding_queue.append((entity_id, chunks))
 
                     # -- Refresh context for next window (includes just-saved entities) --

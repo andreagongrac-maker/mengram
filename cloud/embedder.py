@@ -59,8 +59,8 @@ class CloudEmbedder:
 
     def embed_batch(self, texts: list[str], max_retries: int = 3) -> list[list[float]]:
         """Generate embeddings for multiple texts with retry and backoff for rate limits."""
-        # Sanitize: empty/None → single space (OpenAI returns 400 on empty input)
-        texts = [t if t else " " for t in texts]
+        # Sanitize: empty/None → space, truncate to 25k chars (model limit ~8191 tokens ≈ 30k chars)
+        texts = [(t[:25000] if t else " ") for t in texts]
 
         payload = {
             "model": self.model,
