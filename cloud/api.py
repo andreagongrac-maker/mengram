@@ -5865,7 +5865,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                     elif price_id == PADDLE_PRICES.get("starter"):
                         plan = "starter"
             if not plan:
-                plan = "starter"
+                plan = "pro"
 
             if user_id:
                 updates = {
