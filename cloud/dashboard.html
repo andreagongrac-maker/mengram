@@ -529,12 +529,18 @@
             </div>
             <div class="set-section" id="billing-upgrade">
                 <h3>Upgrade</h3>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:12px;">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:12px;">
+                    <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center;">
+                        <div style="font-size:16px;font-weight:700;margin-bottom:4px;">Starter</div>
+                        <div style="font-size:28px;font-weight:700;color:var(--accent);margin-bottom:4px;">$5<span style="font-size:14px;color:var(--text-2);font-weight:400;">/mo</span></div>
+                        <div style="font-size:12px;color:var(--text-2);margin-bottom:14px;">100 adds, 500 searches</div>
+                        <button onclick="upgradePlan('starter')" id="btn-upgrade-starter" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;font-family:inherit;">Upgrade to Starter</button>
+                    </div>
                     <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center;">
                         <div style="font-size:16px;font-weight:700;margin-bottom:4px;">Pro</div>
                         <div style="font-size:28px;font-weight:700;color:var(--accent);margin-bottom:4px;">$19<span style="font-size:14px;color:var(--text-2);font-weight:400;">/mo</span></div>
                         <div style="font-size:12px;color:var(--text-2);margin-bottom:14px;">1K adds, 10K searches, LLM rerank</div>
-                        <button onclick="upgradePlan('pro')" id="btn-upgrade-pro" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;font-family:inherit;">Upgrade to Pro</button>
+                        <button onclick="upgradePlan('pro')" id="btn-upgrade-pro" style="width:100%;padding:10px;background:var(--bg-elevated);color:var(--text);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;font-family:inherit;">Upgrade to Pro</button>
                     </div>
                     <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center;">
                         <div style="font-size:16px;font-weight:700;margin-bottom:4px;">Business</div>
@@ -1994,7 +2000,8 @@ function closeProcedureDetail() {
 
 // ---- Billing ----
 const PLAN_LIMITS = {
-    free: { adds: 100, searches: 500, agents: 5, reflects: 5 },
+    free: { adds: 20, searches: 100, agents: 3, reflects: 3 },
+    starter: { adds: 100, searches: 500, agents: 10, reflects: 10 },
     pro: { adds: 1000, searches: 10000, agents: 50, reflects: 30 },
     business: { adds: 5000, searches: 30000, agents: -1, reflects: -1 }
 };
@@ -2053,11 +2060,20 @@ async function loadBilling() {
 
         // Hide upgrade section if already on business
         document.getElementById('billing-upgrade').style.display = plan === 'business' ? 'none' : 'block';
-        if (plan === 'pro') {
-            document.getElementById('btn-upgrade-pro').textContent = 'Current Plan';
-            document.getElementById('btn-upgrade-pro').disabled = true;
-            document.getElementById('btn-upgrade-pro').style.opacity = '0.5';
-        }
+        // Mark current plan button as active, disable lower plans
+        const planOrder = ['free', 'starter', 'pro'];
+        const currentIdx = planOrder.indexOf(plan);
+        planOrder.forEach((p, i) => {
+            const btn = document.getElementById('btn-upgrade-' + p);
+            if (!btn) return;
+            if (p === plan) {
+                btn.textContent = 'Current Plan';
+                btn.disabled = true;
+                btn.style.opacity = '0.5';
+            } else if (i < currentIdx) {
+                btn.style.display = 'none';
+            }
+        });
     } catch(e) { console.error('loadBilling error:', e); }
 }
 
