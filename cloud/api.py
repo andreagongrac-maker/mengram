@@ -664,6 +664,17 @@ Be strict — only include entities that directly answer or relate to the query.
         plan = sub.get("plan", "free") if sub else "free"
         if plan not in PLAN_QUOTAS:
             plan = "free"
+        # Canceled subscription past period end → downgrade to free
+        if sub and sub.get("status") == "canceled" and plan != "free":
+            period_end = sub.get("current_period_end")
+            if period_end:
+                try:
+                    end_dt = datetime.datetime.fromisoformat(str(period_end).replace("Z", "+00:00"))
+                    if end_dt < datetime.datetime.now(datetime.timezone.utc):
+                        plan = "free"
+                        store.update_subscription(user_id, plan="free")
+                except Exception:
+                    pass
         rate_limit = PLAN_QUOTAS[plan]["rate_limit"]
 
         if not _check_rate_limit(user_id, rate_limit):
@@ -5746,6 +5757,11 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         if not price_id:
             raise HTTPException(status_code=400, detail=f"Unknown plan: {plan}")
 
+        # Prevent same-plan purchase and downgrades
+        plan_order = {"free": 0, "starter": 1, "pro": 2, "business": 3}
+        if plan_order.get(plan, 0) <= plan_order.get(ctx.plan, 0):
+            raise HTTPException(status_code=400, detail=f"Already on {ctx.plan} plan. Can only upgrade to a higher plan.")
+
         sub = store.get_subscription(user_id)
         subscription_id = sub.get("paddle_subscription_id")
         customer_id = sub.get("paddle_customer_id")
@@ -5837,6 +5853,15 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         if not ts or not h1:
             raise HTTPException(status_code=400, detail="Invalid Paddle-Signature")
 
+        # Reject replayed webhooks older than 5 minutes
+        try:
+            ts_age = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) - int(ts)
+            if ts_age > 300:
+                logger.warning(f"Paddle webhook rejected: timestamp too old ({ts_age}s)")
+                raise HTTPException(status_code=400, detail="Webhook timestamp too old")
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid timestamp")
+
         # Verify HMAC-SHA256
         signed_payload = f"{ts}:{raw_body.decode('utf-8')}"
         computed = hmac.new(
@@ -5853,7 +5878,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
         if event_type == "transaction.completed":
             # Save customer_id → user mapping early (before subscription events)
-            custom = data.get("custom_data", {})
+            custom = data.get("custom_data") or {}
             user_id = custom.get("mengram_user_id")
             customer_id = data.get("customer_id", "")
             if user_id and customer_id:
@@ -5902,17 +5927,22 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                 logger.error(f"Subscription activated but no user found: customer={customer_id}")
 
         elif event_type == "subscription.canceled":
-            custom = data.get("custom_data", {})
+            custom = data.get("custom_data") or {}
             user_id = custom.get("mengram_user_id")
             customer_id = data.get("customer_id", "")
             if not user_id and customer_id:
                 user_id = store.get_user_by_paddle_customer(customer_id)
             if user_id:
-                store.update_subscription(user_id, plan="free", status="canceled")
-                logger.info(f"Subscription canceled: user={user_id}")
+                # Keep current plan until period ends — only change status
+                updates = {"status": "canceled"}
+                current_period = data.get("current_billing_period") or {}
+                if current_period.get("ends_at"):
+                    updates["current_period_end"] = current_period["ends_at"]
+                store.update_subscription(user_id, **updates)
+                logger.info(f"Subscription canceled: user={user_id} (access until period end)")
 
         elif event_type == "subscription.past_due":
-            custom = data.get("custom_data", {})
+            custom = data.get("custom_data") or {}
             user_id = custom.get("mengram_user_id")
             customer_id = data.get("customer_id", "")
             if not user_id and customer_id:
@@ -5923,7 +5953,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
         elif event_type == "subscription.updated":
             # Handle plan changes (upgrade/downgrade) and status updates
-            custom = data.get("custom_data", {})
+            custom = data.get("custom_data") or {}
             user_id = custom.get("mengram_user_id")
             customer_id = data.get("customer_id", "")
             if not user_id and customer_id:

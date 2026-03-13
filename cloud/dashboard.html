@@ -2077,7 +2077,12 @@ async function loadBilling() {
     } catch(e) { console.error('loadBilling error:', e); }
 }
 
+let _upgrading = false;
 async function upgradePlan(plan) {
+    if (_upgrading) return;
+    _upgrading = true;
+    const btn = document.getElementById('btn-upgrade-' + plan);
+    if (btn) { btn.disabled = true; btn.textContent = 'Processing...'; }
     try {
         const r = await fetch(`${API}/v1/billing/checkout?plan=${plan}`, {
             method: 'POST', headers: H()
@@ -2096,6 +2101,7 @@ async function upgradePlan(plan) {
             showToast(typeof d.detail === 'string' ? d.detail : 'Failed to start checkout', 'error');
         }
     } catch(e) { showToast('Error: ' + e.message, 'error'); }
+    finally { _upgrading = false; loadBilling(); }
 }
 
 async function openPortal() {
