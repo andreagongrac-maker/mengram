@@ -4304,18 +4304,22 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                                 "new_facts": fact_strings
                             })
 
-                        entity_id = store.save_entity(
-                            user_id=user_id,
-                            name=name,
-                            type=entity.entity_type,
-                            facts=fact_strings,
-                            relations=entity_relations,
-                            knowledge=entity_knowledge,
-                            metadata=metadata if metadata else None,
-                            expires_at=req.expiration_date,
-                            sub_user_id=sub_uid,
-                            fact_dates=fact_dates,
-                        )
+                        try:
+                            entity_id = store.save_entity(
+                                user_id=user_id,
+                                name=name,
+                                type=entity.entity_type,
+                                facts=fact_strings,
+                                relations=entity_relations,
+                                knowledge=entity_knowledge,
+                                metadata=metadata if metadata else None,
+                                expires_at=req.expiration_date,
+                                sub_user_id=sub_uid,
+                                fact_dates=fact_dates,
+                            )
+                        except Exception as e:
+                            logger.warning(f"⚠️ Entity save failed for '{name}': {e}")
+                            continue
                         created.append(name)
 
                         chunks = [name] + [f"{name}: {fs}" for fs in fact_strings]

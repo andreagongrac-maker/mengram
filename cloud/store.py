@@ -1374,10 +1374,13 @@ class CloudStore:
                 if existing_name != name:
                     better_name = name if name != name.upper() else existing_name
                     if better_name != existing_name:
-                        cur.execute(
-                            "UPDATE entities SET name = %s, updated_at = NOW() WHERE id = %s",
-                            (better_name, entity_id)
-                        )
+                        try:
+                            cur.execute(
+                                "UPDATE entities SET name = %s, updated_at = NOW() WHERE id = %s",
+                                (better_name, entity_id)
+                            )
+                        except (psycopg2.IntegrityError, psycopg2.errors.UniqueViolation):
+                            logger.info(f"🔀 Entity rename skipped (conflict): '{existing_name}' → '{better_name}'")
                 else:
                     cur.execute("UPDATE entities SET updated_at = NOW() WHERE id = %s", (entity_id,))
 
@@ -1391,11 +1394,22 @@ class CloudStore:
             existing_id, canonical_name = duplicate
             if len(name) > len(canonical_name):
                 canonical_name = name
-                with self._cursor() as cur:
-                    cur.execute(
-                        "UPDATE entities SET name = %s, type = %s, updated_at = NOW() WHERE id = %s",
-                        (canonical_name, type, existing_id)
-                    )
+                try:
+                    with self._cursor() as cur:
+                        cur.execute(
+                            "UPDATE entities SET name = %s, type = %s, updated_at = NOW() WHERE id = %s",
+                            (canonical_name, type, existing_id)
+                        )
+                except (psycopg2.IntegrityError, psycopg2.errors.UniqueViolation):
+                    logger.info(f"🔀 Dedup rename conflict: '{name}' already exists, using existing")
+                    with self._cursor() as cur:
+                        cur.execute(
+                            "SELECT id FROM entities WHERE user_id = %s AND sub_user_id = %s AND LOWER(name) = LOWER(%s)",
+                            (user_id, sub_user_id, name)
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            existing_id = str(row[0])
             else:
                 with self._cursor() as cur:
                     cur.execute(
