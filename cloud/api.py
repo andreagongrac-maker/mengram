@@ -46,7 +46,7 @@ class AuthContext:
     rate_limit: int   # per-minute rate limit
 
 PLAN_QUOTAS = {
-    "free":     {"adds": 20,    "searches": 100,    "agents": 3,   "reflects": 3,   "dedups": 1,   "reindexes": 1,   "rules": 3,    "rate_limit": 20,  "webhooks": 0,  "teams": 0,  "sub_users": 3},
+    "free":     {"adds": 50,    "searches": 300,    "agents": 3,   "reflects": 3,   "dedups": 1,   "reindexes": 1,   "rules": 3,    "rate_limit": 20,  "webhooks": 0,  "teams": 0,  "sub_users": 3},
     "starter":  {"adds": 100,   "searches": 500,    "agents": 10,  "reflects": 10,  "dedups": 5,   "reindexes": 5,   "rules": 10,   "rate_limit": 60,  "webhooks": 2,  "teams": 1,  "sub_users": 10},
     "pro":      {"adds": 1_000, "searches": 10_000, "agents": 50,  "reflects": 30,  "dedups": 20,  "reindexes": 10,  "rules": 50,   "rate_limit": 120, "webhooks": 10, "teams": 5,  "sub_users": 50},
     "business": {"adds": 5_000, "searches": 30_000, "agents": -1,  "reflects": -1,  "dedups": -1,  "reindexes": -1,  "rules": -1,   "rate_limit": 300, "webhooks": 50, "teams": -1, "sub_users": -1},
@@ -609,6 +609,9 @@ Be strict — only include entities that directly answer or relate to the query.
         if next_plan:
             subject = f"You've reached your monthly {action_label} limit"
             next_limit = next_plan["adds"] if action == "add" else next_plan["searches"]
+            next_plan_key = {"free": "starter", "starter": "pro", "pro": "business"}.get(plan, "starter")
+            checkout_token = _sign_checkout_token(user_id, next_plan_key)
+            checkout_url = f"https://mengram.io/checkout?token={checkout_token}"
             body_html = f"""
             <p style="font-size:15px;color:#c8c8d8;line-height:1.6">
                 You've used all {max_allowed:,} {action_label} on your {plan} plan this month.
@@ -618,7 +621,7 @@ Be strict — only include entities that directly answer or relate to the query.
                 {next_limit} {action_label}/month, {next_plan['features']}.
             </p>
             <div style="text-align:center;margin:28px 0">
-                <a href="https://mengram.io/dashboard/billing"
+                <a href="{checkout_url}"
                    style="background:#7c3aed;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:600">
                     Upgrade to {next_plan['name']}
                 </a>
@@ -5757,6 +5760,71 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             err_body = e.read().decode()
             logger.error(f"Paddle API error {e.code}: {err_body}")
             raise Exception(f"Paddle API {e.code}: {err_body}")
+
+    def _sign_checkout_token(user_id: str, plan: str) -> str:
+        """Create HMAC-signed token for one-click checkout from email. Expires monthly."""
+        import hmac, hashlib
+        if not PADDLE_WEBHOOK_SECRET:
+            return ""
+        month = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
+        msg = f"{user_id}:{plan}:{month}".encode()
+        sig = hmac.new(PADDLE_WEBHOOK_SECRET.encode(), msg, hashlib.sha256).hexdigest()[:16]
+        return f"{user_id}:{plan}:{month}:{sig}"
+
+    def _verify_checkout_token(token: str) -> tuple:
+        """Verify and parse checkout token. Returns (user_id, plan) or raises."""
+        import hmac, hashlib
+        parts = token.split(":")
+        if len(parts) != 4:
+            raise HTTPException(status_code=400, detail="Invalid checkout token")
+        user_id, plan, month, sig = parts
+        if plan not in ("starter", "pro", "business"):
+            raise HTTPException(status_code=400, detail="Invalid plan")
+        if not PADDLE_WEBHOOK_SECRET:
+            raise HTTPException(status_code=503, detail="Billing not configured")
+        # Token valid for current and previous month (grace period)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        valid_months = [now.strftime("%Y-%m"), (now.replace(day=1) - datetime.timedelta(days=1)).strftime("%Y-%m")]
+        if month not in valid_months:
+            raise HTTPException(status_code=410, detail="Checkout link expired")
+        msg = f"{user_id}:{plan}:{month}".encode()
+        expected = hmac.new(PADDLE_WEBHOOK_SECRET.encode(), msg, hashlib.sha256).hexdigest()[:16]
+        if not hmac.compare_digest(sig, expected):
+            raise HTTPException(status_code=403, detail="Invalid token signature")
+        return user_id, plan
+
+    @app.get("/checkout", tags=["Billing"])
+    async def one_click_checkout(token: str = Query(...)):
+        """One-click checkout from quota email. Redirects to Paddle checkout."""
+        user_id, plan = _verify_checkout_token(token)
+        if not PADDLE_API_KEY:
+            raise HTTPException(status_code=503, detail="Billing not configured")
+        price_id = PADDLE_PRICES.get(plan, "")
+        if not price_id:
+            raise HTTPException(status_code=400, detail=f"Unknown plan: {plan}")
+
+        sub = store.get_subscription(user_id)
+        customer_id = sub.get("paddle_customer_id")
+
+        txn_body = {
+            "items": [{"price_id": price_id, "quantity": 1}],
+            "custom_data": {"mengram_user_id": user_id, "plan": plan},
+        }
+        if customer_id:
+            txn_body["customer_id"] = customer_id
+
+        try:
+            result = _paddle_request("POST", "/transactions", txn_body)
+            checkout_url = result.get("data", {}).get("checkout", {}).get("url", "")
+            if not checkout_url:
+                raise HTTPException(status_code=502, detail="Paddle did not return checkout URL")
+            from starlette.responses import RedirectResponse
+            return RedirectResponse(url=checkout_url, status_code=303)
+        except Exception as e:
+            logger.error(f"One-click checkout error: {e}")
+            # Fallback to dashboard billing page
+            from starlette.responses import RedirectResponse
+            return RedirectResponse(url="/dashboard?tab=billing", status_code=303)
 
     @app.get("/v1/billing", tags=["Billing"])
     async def get_billing(ctx: AuthContext = Depends(auth)):
