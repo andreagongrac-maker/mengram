@@ -4643,6 +4643,23 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                 except Exception as e:
                     logger.error(f"⚠️ Auto-reflection failed: {e}")
 
+                # Auto-trigger curator + connector every 10 adds (respects agent quota)
+                try:
+                    add_count = store.get_usage_count(user_id, "add")
+                    if add_count > 0 and add_count % 10 == 0:
+                        plan_quotas_local = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
+                        max_agents = plan_quotas_local.get("agents", 0)
+                        try:
+                            store.check_and_increment(user_id, "agent", max_agents)
+                            logger.info(f"🤖 Auto-agents triggered (add #{add_count}) for {user_id}")
+                            agent_llm = get_llm()
+                            store.run_curator_agent(user_id, agent_llm.llm, auto_fix=True, sub_user_id=sub_uid)
+                            store.run_connector_agent(user_id, agent_llm.llm, sub_user_id=sub_uid)
+                        except ValueError:
+                            logger.info(f"⏭️ Auto-agents skipped (agent quota reached) for {user_id}")
+                except Exception as e:
+                    logger.error(f"⚠️ Auto-agents failed: {e}")
+
                 # ---- Smart Triggers: detect reminders, contradictions, patterns (Pro+ only) ----
                 triggers_created = 0
                 if ctx.plan not in ("free", "starter"):
