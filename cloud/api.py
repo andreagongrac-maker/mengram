@@ -4775,38 +4775,42 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         total_pages = len(page_images)
         logger.info(f"[add_file] PDF rendered: {total_pages} pages from '{filename}'")
 
-        # ---- PASS 1: Document Scan (first 3 pages) ----
-        scan_pages = page_images[:3]
-        scan_content = [
-            {"type": "text", "text": (
-                f"You are analyzing a document: '{filename}' ({total_pages} pages). "
-                "I'm showing you the first few pages. Provide a brief document scan:\n\n"
-                "1. DOCUMENT TYPE: What kind of document is this?\n"
-                "2. PRIMARY TOPIC: Main subject in 1-2 sentences\n"
-                "3. LANGUAGE: What language is the document in?\n"
-                "4. KEY ENTITIES: List the most important people, organizations, "
-                "projects, or concepts mentioned (up to 10)\n"
-                "5. STRUCTURE: How is the document organized?\n\n"
-                "Be concise. This context will guide per-page extraction."
-            )},
-        ]
-        for b64 in scan_pages:
-            scan_content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"},
-            })
+        # ---- PASS 1: Document Scan (skip for small docs ≤5 pages) ----
+        if total_pages <= 5:
+            document_context = f"Document: {filename} ({total_pages} pages)"
+            logger.info(f"[add_file] Pass 1 skipped (≤5 pages)")
+        else:
+            scan_pages = page_images[:3]
+            scan_content = [
+                {"type": "text", "text": (
+                    f"You are analyzing a document: '{filename}' ({total_pages} pages). "
+                    "I'm showing you the first few pages. Provide a brief document scan:\n\n"
+                    "1. DOCUMENT TYPE: What kind of document is this?\n"
+                    "2. PRIMARY TOPIC: Main subject in 1-2 sentences\n"
+                    "3. LANGUAGE: What language is the document in?\n"
+                    "4. KEY ENTITIES: List the most important people, organizations, "
+                    "projects, or concepts mentioned (up to 10)\n"
+                    "5. STRUCTURE: How is the document organized?\n\n"
+                    "Be concise. This context will guide per-page extraction."
+                )},
+            ]
+            for b64 in scan_pages:
+                scan_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "low"},
+                })
 
-        try:
-            scan_resp = client.chat.completions.create(
-                model=VISION_MODEL,
-                messages=[{"role": "user", "content": scan_content}],
-                max_completion_tokens=1000,
-            )
-            document_context = scan_resp.choices[0].message.content or ""
-            logger.info(f"[add_file] Pass 1 complete: {len(document_context)} chars context")
-        except Exception as e:
-            logger.error(f"[add_file] Pass 1 failed, continuing without context: {e}")
-            document_context = f"Document: {filename}"
+            try:
+                scan_resp = client.chat.completions.create(
+                    model=VISION_MODEL,
+                    messages=[{"role": "user", "content": scan_content}],
+                    max_completion_tokens=1000,
+                )
+                document_context = scan_resp.choices[0].message.content or ""
+                logger.info(f"[add_file] Pass 1 complete: {len(document_context)} chars context")
+            except Exception as e:
+                logger.error(f"[add_file] Pass 1 failed, continuing without context: {e}")
+                document_context = f"Document: {filename}"
 
         # ---- PASS 2: Per-Page Extraction (parallel, 5 workers) ----
         def _extract_single_page(page_num: int, b64_image: str) -> tuple:
@@ -4997,13 +5001,15 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                     return
 
                 # ---- Convert to conversation and run standard pipeline ----
-                conversation = []
+                # Combine all pages into a single message for faster extraction
+                combined_text = ""
                 for i, page_text in enumerate(page_texts):
                     label = f"Page {i+1}" if file_type == "pdf" else f"Chunk {i+1}"
-                    conversation.append({
-                        "role": "user",
-                        "content": f"Document: {filename} ({label} of {len(page_texts)})\n\n{page_text}",
-                    })
+                    combined_text += f"--- {label} of {len(page_texts)} ---\n{page_text}\n\n"
+                conversation = [{
+                    "role": "user",
+                    "content": f"Document: {filename}\n\n{combined_text.strip()}",
+                }]
 
                 _run_extraction_pipeline(
                     user_id=owner_id,
