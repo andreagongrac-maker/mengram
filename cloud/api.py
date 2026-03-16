@@ -61,6 +61,7 @@ DATABASE_URL = os.environ.get(
 )
 REDIS_URL = os.environ.get("REDIS_PUBLIC_URL") or os.environ.get("REDIS_URL")
 EMAIL_FROM = os.environ.get("EMAIL_FROM", "Mengram <onboarding@resend.dev>")
+DEMO_USER_ID = os.environ.get("DEMO_USER_ID", "")
 
 # ---- Models ----
 
@@ -445,6 +446,34 @@ Be strict — only include entities that directly answer or relate to the query.
             entry = _rate_limits.get(user_id)
             if not entry or now - entry["window_start"] >= RATE_WINDOW:
                 _rate_limits[user_id] = {"count": 1, "window_start": now}
+                return True
+            if entry["count"] >= limit:
+                return False
+            entry["count"] += 1
+            return True
+
+    # ---- Playground Rate Limiting (hourly, IP-based) ----
+    _playground_rate_limits = {}
+    PLAYGROUND_RATE_WINDOW = 3600  # 1 hour
+
+    def _check_playground_rate_limit(client_ip: str, limit: int = 30) -> bool:
+        """Hourly rate limit for playground. Returns True if allowed."""
+        redis_client = getattr(store.cache, '_redis', None) if store else None
+        if redis_client:
+            try:
+                key = f"rl:playground:{client_ip}"
+                count = redis_client.incr(key)
+                if count == 1:
+                    redis_client.expire(key, PLAYGROUND_RATE_WINDOW)
+                return count <= limit
+            except Exception:
+                pass
+        import time as _time
+        now = _time.time()
+        with _rate_lock:
+            entry = _playground_rate_limits.get(client_ip)
+            if not entry or now - entry["window_start"] >= PLAYGROUND_RATE_WINDOW:
+                _playground_rate_limits[client_ip] = {"count": 1, "window_start": now}
                 return True
             if entry["count"] >= limit:
                 return False
@@ -991,9 +1020,72 @@ m.add("I love hiking in the mountains")</code></pre>
             "Disallow: /auth/\n"
             "Disallow: /v1/\n"
             "Disallow: /checkout\n"
+            "Disallow: /api/playground/\n"
             "\n"
             "Sitemap: https://mengram.io/sitemap.xml"
         )
+
+    # ---- Interactive Playground (unauthenticated, demo account only) ----
+
+    @app.get("/api/playground/search", tags=["System"])
+    async def playground_search(q: str = Query(..., min_length=1, max_length=200),
+                                request: Request = None):
+        """Public playground search — no auth required. Searches demo account only."""
+        if not DEMO_USER_ID:
+            raise HTTPException(status_code=503, detail="Playground not configured")
+
+        client_ip = request.client.host if request and request.client else "unknown"
+        if not _check_playground_rate_limit(client_ip, 30):
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit reached (30/hour). Sign up for unlimited searches!",
+                headers={"Retry-After": "3600"},
+            )
+
+        user_id = DEMO_USER_ID
+        sub_uid = "default"
+
+        # Cache (5 min — demo data is static)
+        import hashlib as _hl
+        cache_key = f"playground:{_hl.md5(q.encode()).hexdigest()}"
+        cached = store.cache.get(cache_key)
+        if cached:
+            return cached
+
+        embedder = get_embedder()
+        emb = None
+        if embedder:
+            try:
+                embs = embedder.embed_batch([q])
+                emb = embs[0] if embs else None
+            except Exception:
+                pass
+
+        if emb is not None:
+            semantic = store.search_vector(
+                user_id, emb, top_k=10, query_text=q,
+                graph_depth=2, sub_user_id=sub_uid)
+            episodic = store.search_episodes_vector(
+                user_id, emb, top_k=3, sub_user_id=sub_uid)
+            procedural = store.search_procedures_vector(
+                user_id, emb, top_k=3, sub_user_id=sub_uid)
+        else:
+            semantic = store.search_text(user_id, q, top_k=10, sub_user_id=sub_uid)
+            episodic = []
+            procedural = []
+
+        # Clean internal flags
+        for r in semantic:
+            r.pop("_graph", None)
+        semantic = semantic[:5]
+
+        result = {
+            "semantic": semantic,
+            "episodic": episodic,
+            "procedural": procedural,
+        }
+        store.cache.set(cache_key, result, ttl=300)
+        return result
 
     # ---- Enterprise Inquiry ----
     @app.post("/enterprise-inquiry")

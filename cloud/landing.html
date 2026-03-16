@@ -1005,6 +1005,75 @@
         footer a { color: var(--text-2); text-decoration: none; }
         footer a:hover { color: var(--text); }
 
+        /* ---- Playground ---- */
+        .playground-section { padding: 80px 0; }
+        .playground-section h2 { text-align:center;font-size:32px;font-weight:700;letter-spacing:-1px;margin-bottom:12px; }
+        .playground-section > p { text-align:center;color:var(--text-2);font-size:16px;margin-bottom:40px; }
+        .playground-box {
+            max-width:780px;margin:0 auto;background:var(--bg-card);border:1px solid var(--border);
+            border-radius:20px;padding:36px 32px;position:relative;overflow:hidden;
+        }
+        .playground-box::before {
+            content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);
+            width:200px;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);
+        }
+        .pg-search-row { display:flex;gap:10px;margin-bottom:8px; }
+        .pg-search-input {
+            flex:1;padding:14px 18px;background:var(--bg);border:1px solid var(--border);border-radius:12px;
+            color:var(--text);font-size:15px;font-family:'Sora',sans-serif;outline:none;transition:border-color .2s;
+        }
+        .pg-search-input:focus { border-color:var(--accent); }
+        .pg-search-input::placeholder { color:var(--text-3); }
+        .pg-search-btn {
+            padding:14px 28px;background:var(--accent);color:white;border:none;border-radius:12px;
+            font-size:15px;font-weight:600;cursor:pointer;font-family:'Sora',sans-serif;
+            transition:all .2s;white-space:nowrap;
+        }
+        .pg-search-btn:hover { background:#9333ea; }
+        .pg-search-btn:disabled { opacity:.5;cursor:not-allowed; }
+        .pg-suggestions { display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px; }
+        .pg-suggestion {
+            padding:6px 14px;background:var(--accent-dim);border:1px solid rgba(168,85,247,.2);
+            border-radius:20px;color:var(--accent);font-size:13px;cursor:pointer;transition:all .2s;
+        }
+        .pg-suggestion:hover { background:rgba(168,85,247,.2);border-color:var(--accent); }
+        .pg-results { display:none;margin-top:20px; }
+        .pg-results.show { display:block; }
+        .pg-loading { text-align:center;padding:24px;color:var(--text-3);font-size:14px; }
+        .pg-loading .spinner {
+            display:inline-block;width:20px;height:20px;border:2px solid var(--border);
+            border-top-color:var(--accent);border-radius:50%;animation:pg-spin .6s linear infinite;
+            margin-right:8px;vertical-align:middle;
+        }
+        @keyframes pg-spin { to { transform:rotate(360deg); } }
+        .pg-category { margin-bottom:16px; }
+        .pg-category-label {
+            font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;
+            color:var(--text-3);margin-bottom:8px;display:flex;align-items:center;gap:6px;
+        }
+        .pg-dot { width:8px;height:8px;border-radius:50%;display:inline-block; }
+        .pg-dot-semantic { background:var(--accent); }
+        .pg-dot-episodic { background:var(--blue); }
+        .pg-dot-procedural { background:var(--green); }
+        .pg-card {
+            background:var(--bg);border:1px solid var(--border);border-radius:10px;
+            padding:14px 16px;margin-bottom:8px;font-size:13px;line-height:1.6;
+        }
+        .pg-card-title { font-weight:600;color:var(--text);margin-bottom:4px; }
+        .pg-card-type { font-size:11px;color:var(--text-3);background:var(--bg-elevated);padding:2px 8px;border-radius:4px;margin-left:8px; }
+        .pg-fact { color:var(--text-2);padding-left:12px;border-left:2px solid var(--border);margin:4px 0; }
+        .pg-relation { color:var(--text-3);font-size:12px;font-style:italic; }
+        .pg-score { font-size:11px;color:var(--text-3);float:right; }
+        .pg-empty { color:var(--text-3);font-size:13px;text-align:center;padding:16px; }
+        .pg-cta { text-align:center;margin-top:28px;padding-top:20px;border-top:1px solid var(--border); }
+        .pg-cta p { color:var(--text-2);font-size:14px;margin-bottom:12px; }
+        .pg-error { color:#f87171;font-size:13px;text-align:center;padding:12px;background:rgba(239,68,68,.06);border-radius:8px; }
+        @media(max-width:768px) {
+            .playground-box { padding:24px 18px; }
+            .pg-search-row { flex-direction:column; }
+            .pg-search-btn { width:100%; }
+        }
+
         /* ---- Pricing ---- */
         .pricing-section { padding: 80px 0; }
         .pricing-section h2 {
@@ -1655,6 +1724,7 @@
                 <a href="#how">How it works</a>
                 <a href="#install">Install</a>
                 <a href="#features">Features</a>
+                <a href="#playground">Playground</a>
                 <a href="#pricing">Pricing</a>
                 <a href="#changelog">Changelog</a>
                 <a href="/dashboard">Console</a>
@@ -2484,6 +2554,31 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
             </div>
         </section>
 
+        <!-- Playground -->
+        <section class="playground-section" id="playground">
+            <h2 class="reveal">Try it now</h2>
+            <p class="reveal">Search a DevOps agent's memory — no signup needed.</p>
+            <div class="playground-box reveal">
+                <div class="pg-search-row">
+                    <input type="text" class="pg-search-input" id="pg-input"
+                           placeholder="what database do we use?"
+                           maxlength="200" autocomplete="off">
+                    <button class="pg-search-btn" id="pg-btn" onclick="playgroundSearch()">Search</button>
+                </div>
+                <div class="pg-suggestions">
+                    <span class="pg-suggestion" onclick="pgSuggest('what database do we use?')">what database do we use?</span>
+                    <span class="pg-suggestion" onclick="pgSuggest('how to deploy to production')">how to deploy</span>
+                    <span class="pg-suggestion" onclick="pgSuggest('recent incidents')">recent incidents</span>
+                    <span class="pg-suggestion" onclick="pgSuggest('monitoring setup')">monitoring setup</span>
+                </div>
+                <div class="pg-results" id="pg-results"></div>
+                <div class="pg-cta">
+                    <p>This is a demo account with sample data. Want your own?</p>
+                    <a href="#signup" class="signup-btn" style="display:inline-block;text-decoration:none;padding:10px 24px;">Sign up free &rarr;</a>
+                </div>
+            </div>
+        </section>
+
         <!-- Pricing -->
         <section class="pricing-section" id="pricing">
             <h2 class="reveal">Simple, predictable pricing</h2>
@@ -3062,6 +3157,81 @@ results = m.search(<span class="c-str">"What does Ali prefer?"</span>)</div>
             btn.textContent = "Copied!";
             setTimeout(() => btn.textContent = "Copy", 2000);
         }
+
+        // ---- Playground Search ----
+        var _pgThrottle = false;
+        function pgSuggest(text) {
+            document.getElementById('pg-input').value = text;
+            playgroundSearch();
+        }
+        async function playgroundSearch() {
+            var input = document.getElementById('pg-input');
+            var btn = document.getElementById('pg-btn');
+            var resultsDiv = document.getElementById('pg-results');
+            var query = input.value.trim();
+            if (!query) { input.focus(); return; }
+            if (_pgThrottle) return;
+            _pgThrottle = true;
+            setTimeout(function() { _pgThrottle = false; }, 1000);
+
+            btn.disabled = true;
+            btn.textContent = 'Searching...';
+            resultsDiv.className = 'pg-results show';
+            resultsDiv.innerHTML = '<div class="pg-loading"><span class="spinner"></span>Searching 3 memory types...</div>';
+
+            try {
+                var resp = await fetch(API_URL + '/api/playground/search?q=' + encodeURIComponent(query));
+                var data = await resp.json();
+                if (!resp.ok) {
+                    resultsDiv.innerHTML = '<div class="pg-error">' + esc(data.detail || 'Search failed.') + '</div>';
+                    btn.disabled = false; btn.textContent = 'Search'; return;
+                }
+                var html = '';
+                if (data.semantic && data.semantic.length > 0) {
+                    html += '<div class="pg-category"><div class="pg-category-label"><span class="pg-dot pg-dot-semantic"></span>Semantic Memory (entities &amp; facts)</div>';
+                    data.semantic.forEach(function(r) {
+                        html += '<div class="pg-card"><div class="pg-card-title">' + esc(r.entity || r.name) + '<span class="pg-card-type">' + esc(r.type || '') + '</span>';
+                        if (r.score > 0.1) html += '<span class="pg-score">' + (r.score * 100).toFixed(0) + '%</span>';
+                        html += '</div>';
+                        (r.facts || []).forEach(function(f) { html += '<div class="pg-fact">' + esc(f) + '</div>'; });
+                        (r.relations || []).slice(0, 3).forEach(function(rel) {
+                            html += '<div class="pg-relation">' + esc(rel.type || '') + ' &rarr; ' + esc(rel.target || '') + '</div>';
+                        });
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                }
+                if (data.episodic && data.episodic.length > 0) {
+                    html += '<div class="pg-category"><div class="pg-category-label"><span class="pg-dot pg-dot-episodic"></span>Episodic Memory (events)</div>';
+                    data.episodic.forEach(function(r) {
+                        html += '<div class="pg-card"><div class="pg-card-title">' + esc(r.summary || '') + '</div>';
+                        if (r.context) html += '<div class="pg-fact">' + esc(r.context) + '</div>';
+                        if (r.outcome) html += '<div class="pg-fact" style="color:var(--green)">' + esc(r.outcome) + '</div>';
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                }
+                if (data.procedural && data.procedural.length > 0) {
+                    html += '<div class="pg-category"><div class="pg-category-label"><span class="pg-dot pg-dot-procedural"></span>Procedural Memory (workflows)</div>';
+                    data.procedural.forEach(function(r) {
+                        html += '<div class="pg-card"><div class="pg-card-title">' + esc(r.name || '') + '</div>';
+                        if (r.trigger_condition) html += '<div class="pg-fact">Trigger: ' + esc(r.trigger_condition) + '</div>';
+                        (r.steps || []).forEach(function(step, i) {
+                            var text = typeof step === 'string' ? step : (step.description || step.action || '');
+                            html += '<div class="pg-fact">' + (i+1) + '. ' + esc(text) + '</div>';
+                        });
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                }
+                if (!html) html = '<div class="pg-empty">No results found. Try a different query.</div>';
+                resultsDiv.innerHTML = html;
+            } catch(err) {
+                resultsDiv.innerHTML = '<div class="pg-error">Network error. Try again.</div>';
+            }
+            btn.disabled = false; btn.textContent = 'Search';
+        }
+        document.getElementById('pg-input').addEventListener('keydown', function(e) { if(e.key==='Enter') playgroundSearch(); });
 
         function copyCmd(btn) {
             const code = btn.parentElement.querySelector('code').textContent;
