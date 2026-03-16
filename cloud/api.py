@@ -4616,7 +4616,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             # Auto-trigger curator + connector every 10 adds (respects agent quota)
             try:
                 add_count = store.get_usage_count(user_id, "add")
-                if add_count > 0 and add_count % 10 == 0:
+                if add_count > 0 and add_count % 10 == 0 and plan not in ("free", "starter"):
                     plan_quotas_local = PLAN_QUOTAS.get(plan, PLAN_QUOTAS["free"])
                     max_agents = plan_quotas_local.get("agents", 0)
                     try:

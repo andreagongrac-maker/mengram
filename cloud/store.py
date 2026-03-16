@@ -4466,12 +4466,18 @@ Be specific and personal, not generic. No markdown, just JSON."""
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     last_triggered TIMESTAMPTZ,
                     trigger_count INTEGER DEFAULT 0,
-                    last_error TEXT
+                    last_error TEXT,
+                    consecutive_failures INTEGER DEFAULT 0
                 )
             """)
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_webhooks_user
                 ON webhooks(user_id, active)
+            """)
+            # Migration: add column for existing tables
+            cur.execute("""
+                ALTER TABLE webhooks ADD COLUMN IF NOT EXISTS
+                consecutive_failures INTEGER DEFAULT 0
             """)
 
     def create_webhook(self, user_id: str, url: str, name: str = "",
@@ -4625,42 +4631,62 @@ Be specific and personal, not generic. No markdown, just JSON."""
                     sig = _hmac.new(secret.encode(), data, hashlib.sha256).hexdigest()
                     req.add_header("X-Mengram-Signature", sig)
 
-                resp = urllib.request.urlopen(req, timeout=10)
-
-                with self._cursor() as cur2:
-                    cur2.execute("""
-                        UPDATE webhooks SET last_triggered = NOW(),
-                        trigger_count = trigger_count + 1, last_error = NULL
-                        WHERE id = %s
-                    """, (hook_id,))
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    # Rate limited — retry once after 1s backoff
-                    import time
-                    time.sleep(1)
+                import time
+                # Retry with exponential backoff on transient errors (429, 5xx)
+                last_err = None
+                for attempt in range(3):  # up to 3 attempts
                     try:
+                        if attempt > 0:
+                            time.sleep(min(2 ** attempt, 8))  # 2s, 4s backoff
                         urllib.request.urlopen(req, timeout=10)
+                        # Success — record it
                         with self._cursor() as cur2:
                             cur2.execute("""
                                 UPDATE webhooks SET last_triggered = NOW(),
-                                trigger_count = trigger_count + 1, last_error = NULL
+                                trigger_count = trigger_count + 1,
+                                last_error = NULL, consecutive_failures = 0
                                 WHERE id = %s
                             """, (hook_id,))
-                        return
-                    except Exception:
-                        pass
-                logger.error(f"⚠️ Webhook {hook_id} failed: {e}")
+                        return  # delivered
+                    except urllib.error.HTTPError as he:
+                        last_err = he
+                        if he.code in (429, 500, 502, 503, 504):
+                            continue  # transient — retry
+                        break  # 4xx (not 429) — don't retry
+                    except Exception as ex:
+                        last_err = ex
+                        break  # network error — don't retry
+
+                # All retries failed
+                err_msg = str(last_err)[:500]
+                logger.error(f"⚠️ Webhook {hook_id} failed after retries: {last_err}")
                 try:
                     with self._cursor() as cur2:
                         cur2.execute("""
-                            UPDATE webhooks SET last_error = %s WHERE id = %s
-                        """, (str(e)[:500], hook_id))
+                            UPDATE webhooks SET last_error = %s,
+                            consecutive_failures = consecutive_failures + 1
+                            WHERE id = %s
+                        """, (err_msg, hook_id))
+                        # Auto-disable after 20 consecutive failures
+                        cur2.execute("""
+                            UPDATE webhooks SET active = FALSE
+                            WHERE id = %s AND consecutive_failures >= 20
+                        """, (hook_id,))
                 except Exception:
                     pass
+            except Exception as exc:
+                logger.error(f"⚠️ Webhook {hook_id} unexpected error: {exc}")
+
+        def _send_all_sequential():
+            """Send webhooks sequentially with 150ms delay to prevent rate limiting."""
+            import time
+            for i, hook in enumerate(hooks):
+                if i > 0:
+                    time.sleep(0.15)
+                _send(hook["id"], hook["url"], hook["secret"] or "")
 
         pool = self._get_webhook_pool()
-        for hook in hooks:
-            pool.submit(_send, hook["id"], hook["url"], hook["secret"] or "")
+        pool.submit(_send_all_sequential)
 
         logger.info(f"🔔 Fired {len(hooks)} webhooks for {event_type} ({user_id})")
 
