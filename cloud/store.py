@@ -3205,9 +3205,9 @@ REFLECTIONS/PATTERNS:
                     VALUES (%s, %s, %s)
                     ON CONFLICT (user_id, period_start)
                     DO UPDATE SET {column} = usage_counters.{column} + %s
-                    WHERE usage_counters.{column} < %s
+                    WHERE usage_counters.{column} + %s <= %s
                     RETURNING {column}""",
-                (user_id, period_start, count, count, max_allowed)
+                (user_id, period_start, count, count, count, max_allowed)
             )
             row = cur.fetchone()
             if row is None:

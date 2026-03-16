@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mengram")
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Form, Query, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Form, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse, RedirectResponse
 from dataclasses import dataclass
@@ -51,6 +51,15 @@ PLAN_QUOTAS = {
     "pro":      {"adds": 1_000, "searches": 10_000, "agents": 50,  "reflects": 30,  "dedups": 20,  "reindexes": 10,  "rules": 50,   "rate_limit": 120, "webhooks": 10, "teams": 5,  "sub_users": 50},
     "business": {"adds": 5_000, "searches": 30_000, "agents": -1,  "reflects": -1,  "dedups": -1,  "reindexes": -1,  "rules": -1,   "rate_limit": 300, "webhooks": 50, "teams": -1, "sub_users": -1},
 }
+
+FILE_SIZE_LIMITS = {
+    "free":     10 * 1024 * 1024,   # 10 MB
+    "starter":  10 * 1024 * 1024,   # 10 MB
+    "pro":      50 * 1024 * 1024,   # 50 MB
+    "business": 100 * 1024 * 1024,  # 100 MB
+}
+ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "md"}
+VISION_MODEL = os.environ.get("VISION_MODEL", "gpt-5.4")
 
 
 # ---- Config ----
@@ -4248,6 +4257,422 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
 
         return result
 
+    def _run_extraction_pipeline(user_id, sub_uid, conversation, metadata,
+                                 expiration_date, job_id, plan):
+        """Shared extraction pipeline used by /v1/add and /v1/add_file."""
+        created = []
+        try:
+            extractor = get_llm()
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            # Get existing entities context for smarter extraction
+            existing_context = ""
+            try:
+                existing_context = store.get_existing_context(user_id, sub_user_id=sub_uid)
+            except Exception as e:
+                logger.error(f"⚠️ Context fetch failed: {e}")
+
+            # ---- Windowed extraction: extract per 4-message window ----
+            WINDOW_SIZE = 4  # 2 user+assistant exchanges per window
+            all_episodes = []
+            all_procedures = []
+            all_entities = []  # for smart triggers at end
+            embedding_queue = []  # [(entity_id, chunks)]
+
+            for win_start in range(0, max(len(conversation), 1), WINDOW_SIZE):
+                window = conversation[win_start:win_start + WINDOW_SIZE]
+                if not window:
+                    break
+
+                win_extraction = extractor.extract(window, existing_context=existing_context)
+                all_episodes.extend(win_extraction.episodes)
+                all_procedures.extend(win_extraction.procedures)
+                all_entities.extend(win_extraction.entities)
+
+                # -- Conflict resolution for this window's entities --
+                conflict_tasks = []
+                for entity in win_extraction.entities:
+                    if not entity.name:
+                        continue
+                    existing_id = store.get_entity_id(user_id, entity.name, sub_user_id=sub_uid)
+                    if existing_id and entity.facts:
+                        conflict_tasks.append((entity, existing_id))
+
+                conflict_results = {}
+                if conflict_tasks:
+                    def _check_conflicts(entity, existing_id):
+                        try:
+                            plain_facts = [f.content if hasattr(f, 'content') else str(f)
+                                           for f in entity.facts]
+                            archived = store.archive_contradicted_facts(
+                                existing_id, plain_facts, extractor.llm)
+                            return entity.name, archived
+                        except Exception as e:
+                            logger.error(f"⚠️ Conflict check failed for {entity.name}: {e}")
+                            return entity.name, []
+
+                    with ThreadPoolExecutor(max_workers=5) as pool:
+                        futures = [pool.submit(_check_conflicts, ent, eid)
+                                   for ent, eid in conflict_tasks]
+                        for future in as_completed(futures):
+                            name, archived = future.result()
+                            conflict_results[name] = archived
+
+                # -- Save this window's entities immediately --
+                for entity in win_extraction.entities:
+                    name = entity.name
+                    if not name:
+                        continue
+
+                    entity_relations = []
+                    for rel in win_extraction.relations:
+                        if rel.from_entity == name:
+                            entity_relations.append({
+                                "target": rel.to_entity,
+                                "type": rel.relation_type,
+                                "description": rel.description,
+                                "direction": "outgoing",
+                            })
+                        elif rel.to_entity == name:
+                            entity_relations.append({
+                                "target": rel.from_entity,
+                                "type": rel.relation_type,
+                                "description": rel.description,
+                                "direction": "incoming",
+                            })
+
+                    entity_knowledge = []
+                    for k in win_extraction.knowledge:
+                        if k.entity == name:
+                            entity_knowledge.append({
+                                "type": k.knowledge_type,
+                                "title": k.title,
+                                "content": k.content,
+                                "artifact": k.artifact,
+                            })
+
+                    fact_strings = []
+                    fact_dates = {}
+                    for f in entity.facts:
+                        if hasattr(f, 'content'):
+                            fact_strings.append(f.content)
+                            if f.event_date:
+                                fact_dates[f.content] = f.event_date
+                        else:
+                            fact_strings.append(str(f))
+
+                    archived = conflict_results.get(name)
+                    if archived:
+                        store.fire_webhooks(user_id, "memory_update", {
+                            "entity": name,
+                            "archived_facts": archived,
+                            "new_facts": fact_strings
+                        })
+
+                    try:
+                        entity_id = store.save_entity(
+                            user_id=user_id,
+                            name=name,
+                            type=entity.entity_type,
+                            facts=fact_strings,
+                            relations=entity_relations,
+                            knowledge=entity_knowledge,
+                            metadata=metadata if metadata else None,
+                            expires_at=expiration_date,
+                            sub_user_id=sub_uid,
+                            fact_dates=fact_dates,
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Entity save failed for '{name}': {e}")
+                        continue
+                    created.append(name)
+
+                    chunks = [name] + [f"{name}: {fs}" for fs in fact_strings]
+                    for r in entity_relations:
+                        target = r.get("target", "")
+                        rel_type = r.get("type", "")
+                        if target and rel_type:
+                            chunks.append(f"{name} {rel_type} {target}")
+                    for k in entity_knowledge:
+                        kt = f"{k['title']} {k['content']}"
+                        chunks.append(_summarize_for_embedding(kt) if len(kt) > 2000 else kt)
+                    embedding_queue.append((entity_id, chunks))
+
+                # -- Refresh context for next window (includes just-saved entities) --
+                if win_start + WINDOW_SIZE < len(conversation):
+                    try:
+                        existing_context = store.get_existing_context(
+                            user_id, sub_user_id=sub_uid)
+                    except Exception:
+                        pass
+
+            # ---- Batch embeddings across ALL windows (1 API call) ----
+            embedder = get_embedder()
+            if embedder and embedding_queue:
+                all_chunks = []
+                chunk_map = []
+                for entity_id, chunks in embedding_queue:
+                    store.delete_embeddings(entity_id)
+                    for chunk in chunks:
+                        chunk_map.append((entity_id, chunk))
+                        all_chunks.append(chunk)
+
+                if all_chunks:
+                    all_embeddings = embedder.embed_batch(all_chunks)
+                    for (entity_id, chunk_text), emb in zip(chunk_map, all_embeddings):
+                        store.save_embedding(entity_id, chunk_text, emb)
+
+            store.log_usage(user_id, "add")
+            # increment_usage already done atomically in use_quota above
+
+            # ---- Raw Conversation Chunk: save for fallback retrieval ----
+            try:
+                chunk_text = "\n".join(
+                    f"{m.get('role','user')}: {m.get('content','')}"
+                    for m in conversation
+                )[:4000]  # cap at 4000 chars
+                chunk_id = store.save_conversation_chunk(
+                    user_id, chunk_text, sub_user_id=sub_uid)
+                if embedder:
+                    chunk_embs = embedder.embed_batch([chunk_text[:2000]])
+                    if chunk_embs:
+                        store.save_chunk_embedding(chunk_id, chunk_text[:2000], chunk_embs[0])
+            except Exception as e:
+                logger.error(f"⚠️ Raw chunk save failed: {e}")
+
+            # ---- Episodic Memory: save episodes ----
+            episodes_created = 0
+            episodes_linked = 0
+            embedder = get_embedder()
+            for ep in all_episodes:
+                if not ep.summary:
+                    continue
+                try:
+                    episode_id = store.save_episode(
+                        user_id=user_id,
+                        summary=ep.summary,
+                        context=ep.context,
+                        outcome=ep.outcome,
+                        participants=ep.participants,
+                        emotional_valence=ep.emotional_valence,
+                        importance=ep.importance,
+                        metadata=metadata if metadata else None,
+                        expires_at=expiration_date,
+                        sub_user_id=sub_uid,
+                        happened_at=getattr(ep, 'happened_at', None),
+                    )
+                    # Embed episode (truncate to 2000 chars for embedder safety)
+                    ep_embedding = None
+                    if embedder:
+                        ep_text = f"{ep.summary}. {ep.context or ''} {ep.outcome or ''}"[:2000]
+                        ep_embs = embedder.embed_batch([ep_text])
+                        if ep_embs:
+                            ep_embedding = ep_embs[0]
+                            store.save_episode_embedding(episode_id, ep_text, ep_embedding)
+
+                    # ---- Auto-link episode to existing procedure ----
+                    if ep_embedding:
+                        try:
+                            from cloud.evolution import EvolutionEngine
+
+                            similar_procs = store.search_procedures_vector(
+                                user_id, ep_embedding, top_k=3, sub_user_id=sub_uid)
+
+                            # Combined scoring: vector + entity + keyword overlap
+                            ep_text = f"{ep.summary}. {ep.context or ''} {ep.outcome or ''}"
+                            best_proc = None
+                            best_score = 0.0
+
+                            for sp in (similar_procs or []):
+                                proc_text = f"{sp['name']}. {sp.get('trigger_condition') or ''}. "
+                                proc_text += "; ".join(
+                                    s.get("action", "") for s in (sp.get("steps") or [])[:10]
+                                )
+                                score = EvolutionEngine.compute_link_score(
+                                    vector_similarity=sp["score"],
+                                    episode_participants=ep.participants or [],
+                                    procedure_entity_names=sp.get("entity_names") or [],
+                                    episode_text=ep_text,
+                                    procedure_text=proc_text,
+                                )
+                                if score > best_score:
+                                    best_score = score
+                                    best_proc = sp
+
+                            if best_proc and best_score >= 0.55:
+                                # Link episode to procedure
+                                store.link_episodes_to_procedure(
+                                    [episode_id], best_proc["id"])
+
+                                is_failure = EvolutionEngine.is_failure_episode(
+                                    ep.emotional_valence,
+                                    outcome=ep.outcome or "",
+                                    summary=ep.summary,
+                                    context=ep.context or "",
+                                )
+                                if is_failure and plan not in ("free", "starter"):
+                                    # Failure → trigger evolution (Pro+ only)
+                                    evo = EvolutionEngine(store, embedder, extractor.llm)
+                                    evo_result = evo.evolve_on_failure(
+                                        user_id, best_proc["id"], episode_id,
+                                        ep.context or ep.summary,
+                                        sub_user_id=sub_uid)
+                                    if evo_result:
+                                        logger.info(
+                                            f"🔄 Auto-evolved '{best_proc['name']}' "
+                                            f"v{evo_result['old_version']}→v{evo_result['new_version']} "
+                                            f"from episode")
+                                        # Create procedure_evolved trigger
+                                        store.create_procedure_evolved_trigger(
+                                            user_id=user_id,
+                                            procedure_name=best_proc["name"],
+                                            old_version=evo_result["old_version"],
+                                            new_version=evo_result["new_version"],
+                                            change_description=evo_result.get("change_description", ""),
+                                            procedure_id=evo_result["new_procedure_id"],
+                                            sub_user_id=sub_uid,
+                                        )
+                                        # Cross-procedure learning
+                                        evo.suggest_cross_procedure_updates(
+                                            user_id,
+                                            evo_result["new_procedure_id"],
+                                            evo_result.get("change_description", ""),
+                                            sub_user_id=sub_uid,
+                                        )
+                                else:
+                                    # Success → increment success count
+                                    store.procedure_feedback(
+                                        user_id, best_proc["id"], success=True, sub_user_id=sub_uid)
+
+                                episodes_linked += 1
+                        except Exception as e:
+                            logger.error(f"⚠️ Episode auto-link failed: {e}")
+
+                    episodes_created += 1
+                except Exception as e:
+                    logger.error(f"⚠️ Episode save failed: {e}")
+
+            # ---- Procedural Memory: save procedures ----
+            procedures_created = 0
+            for pr in all_procedures:
+                if not pr.name or not pr.steps:
+                    continue
+                try:
+                    proc_id = store.save_procedure(
+                        user_id=user_id,
+                        name=pr.name,
+                        trigger_condition=pr.trigger,
+                        steps=pr.steps,
+                        entity_names=pr.entities,
+                        metadata=metadata if metadata else None,
+                        expires_at=expiration_date,
+                        sub_user_id=sub_uid,
+                    )
+                    # Embed procedure
+                    if embedder:
+                        steps_summary = "; ".join(
+                            s.get("action", "") for s in pr.steps[:10]
+                        )
+                        pr_text = f"{pr.name}. {pr.trigger or ''}. Steps: {steps_summary}"
+                        pr_embs = embedder.embed_batch([pr_text])
+                        if pr_embs:
+                            store.delete_procedure_embeddings(proc_id)
+                            store.save_procedure_embedding(proc_id, pr_text, pr_embs[0])
+                    procedures_created += 1
+                except Exception as e:
+                    logger.error(f"⚠️ Procedure save failed: {e}")
+
+            # Invalidate search cache — fresh data available
+            store.cache.invalidate(f"search:{user_id}:{sub_uid}")
+            store.cache.invalidate(f"searchall:{user_id}:{sub_uid}")
+
+            logger.info(f"✅ Background add complete for {user_id} "
+                       f"(entities={len(created)}, episodes={episodes_created}, "
+                       f"procedures={procedures_created}, linked={episodes_linked})")
+            store.complete_job(job_id, {
+                "created": created,
+                "count": len(created),
+                "episodes": episodes_created,
+                "procedures": procedures_created,
+                "episodes_linked": episodes_linked,
+            })
+
+            # Auto-trigger reflection if needed (respects reflect quota)
+            try:
+                if store.should_reflect(user_id, sub_user_id=sub_uid):
+                    # Check reflect quota before consuming LLM resources
+                    plan_quotas_local = PLAN_QUOTAS.get(plan, PLAN_QUOTAS["free"])
+                    max_reflects = plan_quotas_local.get("reflects", 0)
+                    try:
+                        store.check_and_increment(user_id, "reflect", max_reflects)
+                        logger.info(f"✨ Auto-reflection triggered for {user_id}")
+                        extractor2 = get_llm()
+                        store.generate_reflections(user_id, extractor2.llm, sub_user_id=sub_uid)
+                    except ValueError:
+                        logger.info(f"⏭️ Auto-reflection skipped (reflect quota reached) for {user_id}")
+            except Exception as e:
+                logger.error(f"⚠️ Auto-reflection failed: {e}")
+
+            # Auto-trigger curator + connector every 10 adds (respects agent quota)
+            try:
+                add_count = store.get_usage_count(user_id, "add")
+                if add_count > 0 and add_count % 10 == 0:
+                    plan_quotas_local = PLAN_QUOTAS.get(plan, PLAN_QUOTAS["free"])
+                    max_agents = plan_quotas_local.get("agents", 0)
+                    try:
+                        store.check_and_increment(user_id, "agent", max_agents)
+                        logger.info(f"🤖 Auto-agents triggered (add #{add_count}) for {user_id}")
+                        agent_llm = get_llm()
+                        store.run_curator_agent(user_id, agent_llm.llm, auto_fix=True, sub_user_id=sub_uid)
+                        store.run_connector_agent(user_id, agent_llm.llm, sub_user_id=sub_uid)
+                    except ValueError:
+                        logger.info(f"⏭️ Auto-agents skipped (agent quota reached) for {user_id}")
+            except Exception as e:
+                logger.error(f"⚠️ Auto-agents failed: {e}")
+
+            # ---- Smart Triggers: detect reminders, contradictions, patterns (Pro+ only) ----
+            triggers_created = 0
+            if plan not in ("free", "starter"):
+                try:
+                    triggers_created += store.detect_reminder_triggers(user_id, sub_user_id=sub_uid)
+                    for entity in all_entities:
+                        if entity.name and entity.facts:
+                            plain_facts = [f.content if hasattr(f, 'content') else str(f)
+                                           for f in entity.facts]
+                            triggers_created += store.detect_contradiction_triggers(
+                                user_id, plain_facts, entity.name, sub_user_id=sub_uid
+                            )
+                    triggers_created += store.detect_pattern_triggers(user_id, sub_user_id=sub_uid)
+                    if triggers_created > 0:
+                        logger.info(f"🧠 Smart triggers created: {triggers_created} for {user_id}")
+                except Exception as e:
+                    logger.error(f"⚠️ Smart triggers failed: {e}")
+
+            # ---- Experience-Driven Procedures: detect patterns in episodes ----
+            if episodes_created > 0:
+                try:
+                    from cloud.evolution import EvolutionEngine
+                    evo_engine = EvolutionEngine(store, embedder, extractor.llm)
+                    evo_result = evo_engine.detect_and_create_from_episodes(user_id, sub_user_id=sub_uid)
+                    if evo_result:
+                        logger.info(f"🔄 Auto-created procedure '{evo_result['name']}' "
+                                   f"from {evo_result['source_episode_count']} episodes")
+                        # Notify user about auto-created procedure
+                        store.create_procedure_evolved_trigger(
+                            user_id=user_id,
+                            procedure_name=evo_result["name"],
+                            old_version=0,
+                            new_version=1,
+                            change_description=f"Auto-created from {evo_result['source_episode_count']} similar episodes",
+                            procedure_id=evo_result["procedure_id"],
+                            sub_user_id=sub_uid,
+                        )
+                except Exception as e:
+                    logger.error(f"⚠️ Experience-driven procedure detection failed: {e}")
+        except Exception as e:
+            logger.error(f"❌ Background add failed: {e}")
+            store.fail_job(job_id, str(e))
+
     # ---- Protected endpoints ----
 
     @app.post("/v1/add", tags=["Memory"])
@@ -4289,419 +4714,16 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
             metadata["app_id"] = req.app_id
 
         def process_in_background():
-            created = []
-            try:
-                extractor = get_llm()
-                conversation = [{"role": m.role, "content": m.content} for m in req.messages]
-                from concurrent.futures import ThreadPoolExecutor, as_completed
+            _run_extraction_pipeline(
+                user_id=user_id,
+                sub_uid=sub_uid,
+                conversation=[{"role": m.role, "content": m.content} for m in req.messages],
+                metadata=metadata,
+                expiration_date=req.expiration_date,
+                job_id=job_id,
+                plan=ctx.plan,
+            )
 
-                # Get existing entities context for smarter extraction
-                existing_context = ""
-                try:
-                    existing_context = store.get_existing_context(user_id, sub_user_id=sub_uid)
-                except Exception as e:
-                    logger.error(f"⚠️ Context fetch failed: {e}")
-
-                # ---- Windowed extraction: extract per 4-message window ----
-                WINDOW_SIZE = 4  # 2 user+assistant exchanges per window
-                all_episodes = []
-                all_procedures = []
-                all_entities = []  # for smart triggers at end
-                embedding_queue = []  # [(entity_id, chunks)]
-
-                for win_start in range(0, max(len(conversation), 1), WINDOW_SIZE):
-                    window = conversation[win_start:win_start + WINDOW_SIZE]
-                    if not window:
-                        break
-
-                    win_extraction = extractor.extract(window, existing_context=existing_context)
-                    all_episodes.extend(win_extraction.episodes)
-                    all_procedures.extend(win_extraction.procedures)
-                    all_entities.extend(win_extraction.entities)
-
-                    # -- Conflict resolution for this window's entities --
-                    conflict_tasks = []
-                    for entity in win_extraction.entities:
-                        if not entity.name:
-                            continue
-                        existing_id = store.get_entity_id(user_id, entity.name, sub_user_id=sub_uid)
-                        if existing_id and entity.facts:
-                            conflict_tasks.append((entity, existing_id))
-
-                    conflict_results = {}
-                    if conflict_tasks:
-                        def _check_conflicts(entity, existing_id):
-                            try:
-                                plain_facts = [f.content if hasattr(f, 'content') else str(f)
-                                               for f in entity.facts]
-                                archived = store.archive_contradicted_facts(
-                                    existing_id, plain_facts, extractor.llm)
-                                return entity.name, archived
-                            except Exception as e:
-                                logger.error(f"⚠️ Conflict check failed for {entity.name}: {e}")
-                                return entity.name, []
-
-                        with ThreadPoolExecutor(max_workers=5) as pool:
-                            futures = [pool.submit(_check_conflicts, ent, eid)
-                                       for ent, eid in conflict_tasks]
-                            for future in as_completed(futures):
-                                name, archived = future.result()
-                                conflict_results[name] = archived
-
-                    # -- Save this window's entities immediately --
-                    for entity in win_extraction.entities:
-                        name = entity.name
-                        if not name:
-                            continue
-
-                        entity_relations = []
-                        for rel in win_extraction.relations:
-                            if rel.from_entity == name:
-                                entity_relations.append({
-                                    "target": rel.to_entity,
-                                    "type": rel.relation_type,
-                                    "description": rel.description,
-                                    "direction": "outgoing",
-                                })
-                            elif rel.to_entity == name:
-                                entity_relations.append({
-                                    "target": rel.from_entity,
-                                    "type": rel.relation_type,
-                                    "description": rel.description,
-                                    "direction": "incoming",
-                                })
-
-                        entity_knowledge = []
-                        for k in win_extraction.knowledge:
-                            if k.entity == name:
-                                entity_knowledge.append({
-                                    "type": k.knowledge_type,
-                                    "title": k.title,
-                                    "content": k.content,
-                                    "artifact": k.artifact,
-                                })
-
-                        fact_strings = []
-                        fact_dates = {}
-                        for f in entity.facts:
-                            if hasattr(f, 'content'):
-                                fact_strings.append(f.content)
-                                if f.event_date:
-                                    fact_dates[f.content] = f.event_date
-                            else:
-                                fact_strings.append(str(f))
-
-                        archived = conflict_results.get(name)
-                        if archived:
-                            store.fire_webhooks(user_id, "memory_update", {
-                                "entity": name,
-                                "archived_facts": archived,
-                                "new_facts": fact_strings
-                            })
-
-                        try:
-                            entity_id = store.save_entity(
-                                user_id=user_id,
-                                name=name,
-                                type=entity.entity_type,
-                                facts=fact_strings,
-                                relations=entity_relations,
-                                knowledge=entity_knowledge,
-                                metadata=metadata if metadata else None,
-                                expires_at=req.expiration_date,
-                                sub_user_id=sub_uid,
-                                fact_dates=fact_dates,
-                            )
-                        except Exception as e:
-                            logger.warning(f"⚠️ Entity save failed for '{name}': {e}")
-                            continue
-                        created.append(name)
-
-                        chunks = [name] + [f"{name}: {fs}" for fs in fact_strings]
-                        for r in entity_relations:
-                            target = r.get("target", "")
-                            rel_type = r.get("type", "")
-                            if target and rel_type:
-                                chunks.append(f"{name} {rel_type} {target}")
-                        for k in entity_knowledge:
-                            kt = f"{k['title']} {k['content']}"
-                            chunks.append(_summarize_for_embedding(kt) if len(kt) > 2000 else kt)
-                        embedding_queue.append((entity_id, chunks))
-
-                    # -- Refresh context for next window (includes just-saved entities) --
-                    if win_start + WINDOW_SIZE < len(conversation):
-                        try:
-                            existing_context = store.get_existing_context(
-                                user_id, sub_user_id=sub_uid)
-                        except Exception:
-                            pass
-
-                # ---- Batch embeddings across ALL windows (1 API call) ----
-                embedder = get_embedder()
-                if embedder and embedding_queue:
-                    all_chunks = []
-                    chunk_map = []
-                    for entity_id, chunks in embedding_queue:
-                        store.delete_embeddings(entity_id)
-                        for chunk in chunks:
-                            chunk_map.append((entity_id, chunk))
-                            all_chunks.append(chunk)
-
-                    if all_chunks:
-                        all_embeddings = embedder.embed_batch(all_chunks)
-                        for (entity_id, chunk_text), emb in zip(chunk_map, all_embeddings):
-                            store.save_embedding(entity_id, chunk_text, emb)
-
-                store.log_usage(user_id, "add")
-                # increment_usage already done atomically in use_quota above
-
-                # ---- Raw Conversation Chunk: save for fallback retrieval ----
-                try:
-                    chunk_text = "\n".join(
-                        f"{m.get('role','user')}: {m.get('content','')}"
-                        for m in conversation
-                    )[:4000]  # cap at 4000 chars
-                    chunk_id = store.save_conversation_chunk(
-                        user_id, chunk_text, sub_user_id=sub_uid)
-                    if embedder:
-                        chunk_embs = embedder.embed_batch([chunk_text[:2000]])
-                        if chunk_embs:
-                            store.save_chunk_embedding(chunk_id, chunk_text[:2000], chunk_embs[0])
-                except Exception as e:
-                    logger.error(f"⚠️ Raw chunk save failed: {e}")
-
-                # ---- Episodic Memory: save episodes ----
-                episodes_created = 0
-                episodes_linked = 0
-                embedder = get_embedder()
-                for ep in all_episodes:
-                    if not ep.summary:
-                        continue
-                    try:
-                        episode_id = store.save_episode(
-                            user_id=user_id,
-                            summary=ep.summary,
-                            context=ep.context,
-                            outcome=ep.outcome,
-                            participants=ep.participants,
-                            emotional_valence=ep.emotional_valence,
-                            importance=ep.importance,
-                            metadata=metadata if metadata else None,
-                            expires_at=req.expiration_date,
-                            sub_user_id=sub_uid,
-                            happened_at=getattr(ep, 'happened_at', None),
-                        )
-                        # Embed episode (truncate to 2000 chars for embedder safety)
-                        ep_embedding = None
-                        if embedder:
-                            ep_text = f"{ep.summary}. {ep.context or ''} {ep.outcome or ''}"[:2000]
-                            ep_embs = embedder.embed_batch([ep_text])
-                            if ep_embs:
-                                ep_embedding = ep_embs[0]
-                                store.save_episode_embedding(episode_id, ep_text, ep_embedding)
-
-                        # ---- Auto-link episode to existing procedure ----
-                        if ep_embedding:
-                            try:
-                                from cloud.evolution import EvolutionEngine
-
-                                similar_procs = store.search_procedures_vector(
-                                    user_id, ep_embedding, top_k=3, sub_user_id=sub_uid)
-
-                                # Combined scoring: vector + entity + keyword overlap
-                                ep_text = f"{ep.summary}. {ep.context or ''} {ep.outcome or ''}"
-                                best_proc = None
-                                best_score = 0.0
-
-                                for sp in (similar_procs or []):
-                                    proc_text = f"{sp['name']}. {sp.get('trigger_condition') or ''}. "
-                                    proc_text += "; ".join(
-                                        s.get("action", "") for s in (sp.get("steps") or [])[:10]
-                                    )
-                                    score = EvolutionEngine.compute_link_score(
-                                        vector_similarity=sp["score"],
-                                        episode_participants=ep.participants or [],
-                                        procedure_entity_names=sp.get("entity_names") or [],
-                                        episode_text=ep_text,
-                                        procedure_text=proc_text,
-                                    )
-                                    if score > best_score:
-                                        best_score = score
-                                        best_proc = sp
-
-                                if best_proc and best_score >= 0.55:
-                                    # Link episode to procedure
-                                    store.link_episodes_to_procedure(
-                                        [episode_id], best_proc["id"])
-
-                                    is_failure = EvolutionEngine.is_failure_episode(
-                                        ep.emotional_valence,
-                                        outcome=ep.outcome or "",
-                                        summary=ep.summary,
-                                        context=ep.context or "",
-                                    )
-                                    if is_failure and ctx.plan not in ("free", "starter"):
-                                        # Failure → trigger evolution (Pro+ only)
-                                        evo = EvolutionEngine(store, embedder, extractor.llm)
-                                        evo_result = evo.evolve_on_failure(
-                                            user_id, best_proc["id"], episode_id,
-                                            ep.context or ep.summary,
-                                            sub_user_id=sub_uid)
-                                        if evo_result:
-                                            logger.info(
-                                                f"🔄 Auto-evolved '{best_proc['name']}' "
-                                                f"v{evo_result['old_version']}→v{evo_result['new_version']} "
-                                                f"from episode")
-                                            # Create procedure_evolved trigger
-                                            store.create_procedure_evolved_trigger(
-                                                user_id=user_id,
-                                                procedure_name=best_proc["name"],
-                                                old_version=evo_result["old_version"],
-                                                new_version=evo_result["new_version"],
-                                                change_description=evo_result.get("change_description", ""),
-                                                procedure_id=evo_result["new_procedure_id"],
-                                                sub_user_id=sub_uid,
-                                            )
-                                            # Cross-procedure learning
-                                            evo.suggest_cross_procedure_updates(
-                                                user_id,
-                                                evo_result["new_procedure_id"],
-                                                evo_result.get("change_description", ""),
-                                                sub_user_id=sub_uid,
-                                            )
-                                    else:
-                                        # Success → increment success count
-                                        store.procedure_feedback(
-                                            user_id, best_proc["id"], success=True, sub_user_id=sub_uid)
-
-                                    episodes_linked += 1
-                            except Exception as e:
-                                logger.error(f"⚠️ Episode auto-link failed: {e}")
-
-                        episodes_created += 1
-                    except Exception as e:
-                        logger.error(f"⚠️ Episode save failed: {e}")
-
-                # ---- Procedural Memory: save procedures ----
-                procedures_created = 0
-                for pr in all_procedures:
-                    if not pr.name or not pr.steps:
-                        continue
-                    try:
-                        proc_id = store.save_procedure(
-                            user_id=user_id,
-                            name=pr.name,
-                            trigger_condition=pr.trigger,
-                            steps=pr.steps,
-                            entity_names=pr.entities,
-                            metadata=metadata if metadata else None,
-                            expires_at=req.expiration_date,
-                            sub_user_id=sub_uid,
-                        )
-                        # Embed procedure
-                        if embedder:
-                            steps_summary = "; ".join(
-                                s.get("action", "") for s in pr.steps[:10]
-                            )
-                            pr_text = f"{pr.name}. {pr.trigger or ''}. Steps: {steps_summary}"
-                            pr_embs = embedder.embed_batch([pr_text])
-                            if pr_embs:
-                                store.delete_procedure_embeddings(proc_id)
-                                store.save_procedure_embedding(proc_id, pr_text, pr_embs[0])
-                        procedures_created += 1
-                    except Exception as e:
-                        logger.error(f"⚠️ Procedure save failed: {e}")
-
-                # Invalidate search cache — fresh data available
-                store.cache.invalidate(f"search:{user_id}:{sub_uid}")
-                store.cache.invalidate(f"searchall:{user_id}:{sub_uid}")
-
-                logger.info(f"✅ Background add complete for {user_id} "
-                           f"(entities={len(created)}, episodes={episodes_created}, "
-                           f"procedures={procedures_created}, linked={episodes_linked})")
-                store.complete_job(job_id, {
-                    "created": created,
-                    "count": len(created),
-                    "episodes": episodes_created,
-                    "procedures": procedures_created,
-                    "episodes_linked": episodes_linked,
-                })
-
-                # Auto-trigger reflection if needed (respects reflect quota)
-                try:
-                    if store.should_reflect(user_id, sub_user_id=sub_uid):
-                        # Check reflect quota before consuming LLM resources
-                        plan_quotas_local = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
-                        max_reflects = plan_quotas_local.get("reflects", 0)
-                        try:
-                            store.check_and_increment(user_id, "reflect", max_reflects)
-                            logger.info(f"✨ Auto-reflection triggered for {user_id}")
-                            extractor2 = get_llm()
-                            store.generate_reflections(user_id, extractor2.llm, sub_user_id=sub_uid)
-                        except ValueError:
-                            logger.info(f"⏭️ Auto-reflection skipped (reflect quota reached) for {user_id}")
-                except Exception as e:
-                    logger.error(f"⚠️ Auto-reflection failed: {e}")
-
-                # Auto-trigger curator + connector every 10 adds (respects agent quota)
-                try:
-                    add_count = store.get_usage_count(user_id, "add")
-                    if add_count > 0 and add_count % 10 == 0:
-                        plan_quotas_local = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
-                        max_agents = plan_quotas_local.get("agents", 0)
-                        try:
-                            store.check_and_increment(user_id, "agent", max_agents)
-                            logger.info(f"🤖 Auto-agents triggered (add #{add_count}) for {user_id}")
-                            agent_llm = get_llm()
-                            store.run_curator_agent(user_id, agent_llm.llm, auto_fix=True, sub_user_id=sub_uid)
-                            store.run_connector_agent(user_id, agent_llm.llm, sub_user_id=sub_uid)
-                        except ValueError:
-                            logger.info(f"⏭️ Auto-agents skipped (agent quota reached) for {user_id}")
-                except Exception as e:
-                    logger.error(f"⚠️ Auto-agents failed: {e}")
-
-                # ---- Smart Triggers: detect reminders, contradictions, patterns (Pro+ only) ----
-                triggers_created = 0
-                if ctx.plan not in ("free", "starter"):
-                    try:
-                        triggers_created += store.detect_reminder_triggers(user_id, sub_user_id=sub_uid)
-                        for entity in all_entities:
-                            if entity.name and entity.facts:
-                                plain_facts = [f.content if hasattr(f, 'content') else str(f)
-                                               for f in entity.facts]
-                                triggers_created += store.detect_contradiction_triggers(
-                                    user_id, plain_facts, entity.name, sub_user_id=sub_uid
-                                )
-                        triggers_created += store.detect_pattern_triggers(user_id, sub_user_id=sub_uid)
-                        if triggers_created > 0:
-                            logger.info(f"🧠 Smart triggers created: {triggers_created} for {user_id}")
-                    except Exception as e:
-                        logger.error(f"⚠️ Smart triggers failed: {e}")
-
-                # ---- Experience-Driven Procedures: detect patterns in episodes ----
-                if episodes_created > 0:
-                    try:
-                        from cloud.evolution import EvolutionEngine
-                        evo_engine = EvolutionEngine(store, embedder, extractor.llm)
-                        evo_result = evo_engine.detect_and_create_from_episodes(user_id, sub_user_id=sub_uid)
-                        if evo_result:
-                            logger.info(f"🔄 Auto-created procedure '{evo_result['name']}' "
-                                       f"from {evo_result['source_episode_count']} episodes")
-                            # Notify user about auto-created procedure
-                            store.create_procedure_evolved_trigger(
-                                user_id=user_id,
-                                procedure_name=evo_result["name"],
-                                old_version=0,
-                                new_version=1,
-                                change_description=f"Auto-created from {evo_result['source_episode_count']} similar episodes",
-                                procedure_id=evo_result["procedure_id"],
-                                sub_user_id=sub_uid,
-                            )
-                    except Exception as e:
-                        logger.error(f"⚠️ Experience-driven procedure detection failed: {e}")
-            except Exception as e:
-                logger.error(f"❌ Background add failed: {e}")
-                store.fail_job(job_id, str(e))
 
         threading.Thread(target=process_in_background, daemon=True).start()
 
@@ -4725,6 +4747,288 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         # Delegate to add() which handles quota check + increment internally
         result = await add(add_req, ctx)
         return result
+
+    def _extract_pdf_with_vision(file_bytes: bytes, filename: str) -> list[str]:
+        """Two-pass GPT-5.4 vision extraction from PDF pages."""
+        import fitz  # PyMuPDF
+        import base64
+        from openai import OpenAI
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+        if not openai_key:
+            raise ValueError("OPENAI_API_KEY not configured for vision extraction")
+
+        client = OpenAI(api_key=openai_key)
+
+        # Render all pages to PNG at 200 DPI
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        page_images = []
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            pix = page.get_pixmap(dpi=200)
+            png_bytes = pix.tobytes("png")
+            b64 = base64.b64encode(png_bytes).decode("ascii")
+            page_images.append(b64)
+        doc.close()
+
+        total_pages = len(page_images)
+        logger.info(f"[add_file] PDF rendered: {total_pages} pages from '{filename}'")
+
+        # ---- PASS 1: Document Scan (first 3 pages) ----
+        scan_pages = page_images[:3]
+        scan_content = [
+            {"type": "text", "text": (
+                f"You are analyzing a document: '{filename}' ({total_pages} pages). "
+                "I'm showing you the first few pages. Provide a brief document scan:\n\n"
+                "1. DOCUMENT TYPE: What kind of document is this?\n"
+                "2. PRIMARY TOPIC: Main subject in 1-2 sentences\n"
+                "3. LANGUAGE: What language is the document in?\n"
+                "4. KEY ENTITIES: List the most important people, organizations, "
+                "projects, or concepts mentioned (up to 10)\n"
+                "5. STRUCTURE: How is the document organized?\n\n"
+                "Be concise. This context will guide per-page extraction."
+            )},
+        ]
+        for b64 in scan_pages:
+            scan_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"},
+            })
+
+        try:
+            scan_resp = client.chat.completions.create(
+                model=VISION_MODEL,
+                messages=[{"role": "user", "content": scan_content}],
+                max_completion_tokens=1000,
+            )
+            document_context = scan_resp.choices[0].message.content or ""
+            logger.info(f"[add_file] Pass 1 complete: {len(document_context)} chars context")
+        except Exception as e:
+            logger.error(f"[add_file] Pass 1 failed, continuing without context: {e}")
+            document_context = f"Document: {filename}"
+
+        # ---- PASS 2: Per-Page Extraction (parallel, 5 workers) ----
+        def _extract_single_page(page_num: int, b64_image: str) -> tuple:
+            page_content = [
+                {"type": "text", "text": (
+                    f"DOCUMENT CONTEXT:\n{document_context}\n\n---\n\n"
+                    f"Extract ALL text and information from page {page_num + 1} of "
+                    f"{total_pages} of '{filename}'.\n\n"
+                    "INSTRUCTIONS:\n"
+                    "- Extract every piece of text visible on the page\n"
+                    "- Preserve the logical structure (headings, paragraphs, lists, tables)\n"
+                    "- For tables: convert to a readable text format with clear column labels\n"
+                    "- For diagrams/charts: describe the data and relationships shown\n"
+                    "- For handwritten text: transcribe as accurately as possible\n"
+                    "- Include all names, dates, numbers, and specific details\n"
+                    "- Preserve any code blocks or technical notation\n"
+                    "- Output clean, structured text ready for knowledge extraction\n"
+                    "- Do NOT add commentary or interpretation — just extract the content"
+                )},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64_image}", "detail": "high"},
+                },
+            ]
+            try:
+                resp = client.chat.completions.create(
+                    model=VISION_MODEL,
+                    messages=[{"role": "user", "content": page_content}],
+                    max_completion_tokens=4000,
+                )
+                text = (resp.choices[0].message.content or "").strip()
+                return (page_num, text)
+            except Exception as e:
+                logger.error(f"[add_file] Page {page_num + 1} extraction failed: {e}")
+                return (page_num, "")
+
+        page_texts = [""] * total_pages
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = [
+                pool.submit(_extract_single_page, i, img)
+                for i, img in enumerate(page_images)
+            ]
+            for future in as_completed(futures):
+                page_num, text = future.result()
+                page_texts[page_num] = text
+
+        result = [t for t in page_texts if t.strip()]
+        logger.info(f"[add_file] Pass 2 complete: {len(result)}/{total_pages} pages extracted")
+        return result
+
+    @app.post("/v1/add_file", tags=["Memory"])
+    async def add_file(
+        file: UploadFile = File(...),
+        user_id: str = Form("default"),
+        agent_id: str | None = Form(None),
+        run_id: str | None = Form(None),
+        app_id: str | None = Form(None),
+        ctx: AuthContext = Depends(auth),
+    ):
+        """
+        Upload a file (PDF, DOCX, TXT, MD) and extract structured memories.
+
+        PDF files use premium two-pass GPT-5.4 vision extraction.
+        Each page/chunk counts as 1 add from your quota.
+        Returns immediately with job_id; processes in background.
+        """
+        import threading
+
+        owner_id = ctx.user_id
+        sub_uid = user_id or "default"
+
+        # ---- Validate file type ----
+        filename = file.filename or "unknown"
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+        if ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: .{ext}. Supported: PDF, DOCX, TXT, MD.",
+            )
+
+        # ---- Read file and check size ----
+        file_bytes = await file.read()
+        max_size = FILE_SIZE_LIMITS.get(ctx.plan, FILE_SIZE_LIMITS["free"])
+        if len(file_bytes) > max_size:
+            max_mb = max_size // (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "error": "file_too_large",
+                    "size_bytes": len(file_bytes),
+                    "limit_bytes": max_size,
+                    "limit_mb": max_mb,
+                    "plan": ctx.plan,
+                    "message": f"File exceeds {max_mb}MB limit for {ctx.plan} plan. "
+                               f"Upgrade at https://mengram.io/#pricing",
+                },
+            )
+
+        if len(file_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Empty file uploaded.")
+
+        # ---- Count pages/chunks (pre-parse text for DOCX/TXT to avoid double parsing) ----
+        page_count = 0
+        file_type = ext
+        pre_parsed_chunks = None  # For DOCX/TXT: reused in background thread
+
+        if file_type == "pdf":
+            try:
+                import fitz
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
+                page_count = len(doc)
+                doc.close()
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to read PDF: {e}")
+            if page_count == 0:
+                raise HTTPException(status_code=400, detail="PDF has no pages.")
+
+        elif file_type == "docx":
+            try:
+                import docx
+                import io
+                doc = docx.Document(io.BytesIO(file_bytes))
+                full_text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to read DOCX: {e}")
+            if not full_text.strip():
+                raise HTTPException(status_code=400, detail="DOCX has no text content.")
+            from importer import chunk_text
+            pre_parsed_chunks = chunk_text(full_text, 4000)
+            page_count = max(len(pre_parsed_chunks), 1)
+
+        else:  # txt, md
+            try:
+                full_text = file_bytes.decode("utf-8", errors="replace")
+            except Exception:
+                full_text = file_bytes.decode("latin-1", errors="replace")
+            if not full_text.strip():
+                raise HTTPException(status_code=400, detail="File has no text content.")
+            from importer import chunk_text
+            pre_parsed_chunks = chunk_text(full_text, 4000)
+            page_count = max(len(pre_parsed_chunks), 1)
+
+        # ---- Check quota upfront (all pages at once) ----
+        use_quota(ctx, "add", count=page_count)
+
+        # ---- Enforce sub-user limit ----
+        if sub_uid != "default":
+            plan_quotas = PLAN_QUOTAS.get(ctx.plan, PLAN_QUOTAS["free"])
+            max_sub_users = plan_quotas.get("sub_users", 3)
+            if max_sub_users != -1:
+                distinct_sub_users = store.count_distinct_sub_users(owner_id)
+                if distinct_sub_users >= max_sub_users:
+                    known = store.is_known_sub_user(owner_id, sub_uid)
+                    if not known:
+                        raise HTTPException(status_code=402, detail={
+                            "error": "quota_exceeded", "action": "sub_users",
+                            "limit": max_sub_users, "used": distinct_sub_users,
+                            "plan": ctx.plan,
+                            "message": f"Sub-user limit reached ({max_sub_users}). "
+                                       f"Upgrade your plan.",
+                            "upgrade_url": "https://mengram.io/#pricing",
+                        })
+
+        # ---- Create job and return 202 ----
+        job_id = store.create_job(owner_id, "add_file")
+
+        metadata = {"source": "file_upload", "filename": filename,
+                     "file_type": file_type, "page_count": page_count}
+        if agent_id:
+            metadata["agent_id"] = agent_id
+        if run_id:
+            metadata["run_id"] = run_id
+        if app_id:
+            metadata["app_id"] = app_id
+
+        def process_file_in_background():
+            try:
+                # ---- Extract text from file ----
+                if file_type == "pdf":
+                    page_texts = _extract_pdf_with_vision(file_bytes, filename)
+                else:
+                    # DOCX/TXT/MD: reuse pre-parsed chunks from validation step
+                    page_texts = pre_parsed_chunks or []
+
+                if not page_texts:
+                    store.fail_job(job_id, "No text could be extracted from file.")
+                    return
+
+                # ---- Convert to conversation and run standard pipeline ----
+                conversation = []
+                for i, page_text in enumerate(page_texts):
+                    label = f"Page {i+1}" if file_type == "pdf" else f"Chunk {i+1}"
+                    conversation.append({
+                        "role": "user",
+                        "content": f"Document: {filename} ({label} of {len(page_texts)})\n\n{page_text}",
+                    })
+
+                _run_extraction_pipeline(
+                    user_id=owner_id,
+                    sub_uid=sub_uid,
+                    conversation=conversation,
+                    metadata=metadata,
+                    expiration_date=None,
+                    job_id=job_id,
+                    plan=ctx.plan,
+                )
+            except Exception as e:
+                logger.error(f"[add_file] Background processing failed: {e}")
+                store.fail_job(job_id, str(e))
+
+        threading.Thread(target=process_file_in_background, daemon=True).start()
+
+        from starlette.responses import JSONResponse
+        return JSONResponse(status_code=202, content={
+            "status": "accepted",
+            "message": f"Processing {filename} ({page_count} pages/chunks) in background.",
+            "job_id": job_id,
+            "file_type": file_type,
+            "page_count": page_count,
+            "quota_used": page_count,
+        })
 
     @app.get("/v1/jobs/{job_id}", tags=["System"])
     async def job_status(job_id: str, ctx: AuthContext = Depends(auth)):
