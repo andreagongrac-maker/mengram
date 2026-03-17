@@ -576,7 +576,7 @@ class ConversationExtractor:
 class MockLLMClient(LLMClient):
     """Mock LLM for testing without API"""
 
-    def complete(self, prompt: str, system: str = "") -> str:
+    def complete(self, prompt: str, system: str = "", response_format=None) -> str:
         return json.dumps({
             "entities": [
                 {

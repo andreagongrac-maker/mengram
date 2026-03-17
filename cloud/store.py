@@ -2389,15 +2389,21 @@ Which existing facts should be REMOVED? Remove facts that are:
 2. OBVIOUSLY WRONG given the new context (e.g. "is a programming language" on a person entity that has fact "is a colleague")
 3. DUPLICATED or redundant with new facts
 
-Return ONLY a JSON array of the old fact strings to remove, or empty array [] if none.
+Return ONLY JSON: {{"remove": ["old fact 1", "old fact 2"]}} or {{"remove": []}} if none.
 No markdown, no explanation."""
 
         try:
             contradicted = None
             for attempt in range(2):
                 response = llm_client.complete(prompt, response_format={"type": "json_object"})
-                contradicted = _safe_parse_json(response, fallback=[])
-                if isinstance(contradicted, list):
+                result = _safe_parse_json(response)
+                if isinstance(result, dict) and "remove" in result:
+                    contradicted = result["remove"]
+                    if isinstance(contradicted, list):
+                        break
+                elif isinstance(result, list):
+                    # Fallback: LLM returned bare array (non-OpenAI providers)
+                    contradicted = result
                     break
             if not isinstance(contradicted, list):
                 return []
