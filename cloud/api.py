@@ -5381,7 +5381,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
         use_quota(ctx, "agent")  # atomic check+increment
 
         if agent not in ("all", "curator", "connector", "digest"):
-            raise HTTPException(status_code=400, detail=f"Unknown agent: {agent}. Use: curator, connector, digest, all")
+            raise HTTPException(status_code=400, detail=f"Unknown agent: {agent}. Use: curator, connector, digest, reclassify, all")
 
         job_id = store.create_job(user_id, f"agents_{agent}")
 
@@ -5400,6 +5400,9 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                 elif agent == "digest":
                     result = store.run_digest_agent(user_id, llm.llm, sub_user_id=sub_user_id)
                     store.complete_job(job_id, {"agent": "digest", "result": result})
+                elif agent == "reclassify":
+                    result = store.reclassify_unknown_entities(user_id, llm.llm, sub_user_id=sub_user_id)
+                    store.complete_job(job_id, {"agent": "reclassify", "result": result})
                 logger.info(f"✅ Agents ({agent}) completed for {user_id}")
             except Exception as e:
                 logger.error(f"❌ Agents ({agent}) failed for {user_id}: {e}")

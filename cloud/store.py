@@ -1412,17 +1412,33 @@ class CloudStore:
             if exact:
                 entity_id = str(exact[0])
                 existing_name = exact[1]
+                # Upgrade type if currently unknown and we have a real type
+                cur.execute("SELECT type FROM entities WHERE id = %s", (entity_id,))
+                current_type = cur.fetchone()[0]
+                should_update_type = (current_type == 'unknown' and type and type != 'unknown')
                 # Keep the more "normal" casing (not all-caps)
                 if existing_name != name:
                     better_name = name if name != name.upper() else existing_name
                     if better_name != existing_name:
                         try:
-                            cur.execute(
-                                "UPDATE entities SET name = %s, updated_at = NOW() WHERE id = %s",
-                                (better_name, entity_id)
-                            )
+                            if should_update_type:
+                                cur.execute(
+                                    "UPDATE entities SET name = %s, type = %s, updated_at = NOW() WHERE id = %s",
+                                    (better_name, type, entity_id)
+                                )
+                            else:
+                                cur.execute(
+                                    "UPDATE entities SET name = %s, updated_at = NOW() WHERE id = %s",
+                                    (better_name, entity_id)
+                                )
                         except (psycopg2.IntegrityError, psycopg2.errors.UniqueViolation):
                             logger.info(f"🔀 Entity rename skipped (conflict): '{existing_name}' → '{better_name}'")
+                    elif should_update_type:
+                        cur.execute("UPDATE entities SET type = %s, updated_at = NOW() WHERE id = %s", (type, entity_id))
+                    else:
+                        cur.execute("UPDATE entities SET updated_at = NOW() WHERE id = %s", (entity_id,))
+                elif should_update_type:
+                    cur.execute("UPDATE entities SET type = %s, updated_at = NOW() WHERE id = %s", (type, entity_id))
                 else:
                     cur.execute("UPDATE entities SET updated_at = NOW() WHERE id = %s", (entity_id,))
 
@@ -4294,6 +4310,87 @@ Be specific and personal, not generic. No markdown, just JSON."""
         logger.info(f"🧹 Curator agent: {issues_found} issues, {actions_taken} auto-fixed for {user_id}")
         return result
 
+    def reclassify_unknown_entities(self, user_id: str, llm_client, sub_user_id: str = "default") -> dict:
+        """Reclassify entities with type='unknown' using LLM batch classification.
+        Processes in batches of 40 to stay within token limits."""
+        VALID_TYPES = {"person", "project", "technology", "company", "concept", "place", "activity"}
+
+        with self._cursor(dict_cursor=True) as cur:
+            cur.execute(
+                """SELECT e.id, e.name,
+                          (SELECT array_agg(sub.content) FROM (
+                              SELECT f.content FROM facts f
+                              WHERE f.entity_id = e.id AND f.archived = FALSE
+                              ORDER BY f.importance DESC NULLS LAST LIMIT 5
+                          ) sub) as sample_facts
+                   FROM entities e
+                   WHERE e.user_id = %s AND e.sub_user_id = %s AND e.type = 'unknown'
+                   ORDER BY (SELECT count(*) FROM facts WHERE entity_id = e.id AND archived = FALSE) DESC""",
+                (user_id, sub_user_id)
+            )
+            unknowns = cur.fetchall()
+
+        if not unknowns:
+            return {"reclassified": 0, "total_unknown": 0}
+
+        reclassified = 0
+        batch_size = 40
+
+        for i in range(0, len(unknowns), batch_size):
+            batch = unknowns[i:i + batch_size]
+            lines = []
+            for ent in batch:
+                facts = ent["sample_facts"] or []
+                facts_str = "; ".join(str(f) for f in facts[:5] if f)
+                lines.append(f"- {ent['name']}: {facts_str}" if facts_str else f"- {ent['name']}")
+
+            prompt = f"""Classify each entity into exactly one type: person, project, technology, company, concept, place, activity.
+
+ENTITIES:
+{chr(10).join(lines)}
+
+Return ONLY JSON (no markdown):
+{{
+  "classifications": [
+    {{"name": "Entity Name", "type": "person"}},
+    ...
+  ]
+}}"""
+
+            try:
+                result = None
+                for attempt in range(2):
+                    response = llm_client.complete(prompt)
+                    result = _safe_parse_json(response)
+                    if isinstance(result, dict) and "classifications" in result:
+                        break
+                    logger.warning(f"⚠️ Reclassify JSON invalid (attempt {attempt + 1}/2), retrying...")
+                if not isinstance(result, dict) or "classifications" not in result:
+                    continue
+            except Exception as e:
+                logger.error(f"⚠️ Reclassify batch failed: {e}")
+                continue
+
+            name_to_id = {ent["name"].lower(): str(ent["id"]) for ent in batch}
+            for item in result["classifications"]:
+                ent_name = item.get("name", "")
+                ent_type = item.get("type", "").lower().strip()
+                if ent_type not in VALID_TYPES:
+                    continue
+                entity_id = name_to_id.get(ent_name.lower())
+                if not entity_id:
+                    continue
+                with self._cursor() as cur:
+                    cur.execute(
+                        "UPDATE entities SET type = %s, updated_at = NOW() WHERE id = %s AND type = 'unknown'",
+                        (ent_type, entity_id)
+                    )
+                    if cur.rowcount > 0:
+                        reclassified += 1
+
+        logger.info(f"🏷️ Reclassified {reclassified}/{len(unknowns)} unknown entities for {user_id}")
+        return {"reclassified": reclassified, "total_unknown": len(unknowns)}
+
     def run_connector_agent(self, user_id: str, llm_client, sub_user_id: str = "default") -> dict:
         """Connector Agent — finds hidden connections, patterns, insights."""
         self.ensure_agents_table()
@@ -4445,12 +4542,15 @@ Be specific and personal, not generic. No markdown, just JSON."""
         return result
 
     def run_all_agents(self, user_id: str, llm_client, auto_fix: bool = False, sub_user_id: str = "default") -> dict:
-        """Run all three agents in sequence."""
+        """Run all agents in sequence."""
         results = {}
 
         logger.info(f"🤖 Running all agents for {user_id}...")
 
-        # 1. Curator first (clean up)
+        # 0. Reclassify unknown entities first (improves all downstream agent quality)
+        results["reclassify"] = self.reclassify_unknown_entities(user_id, llm_client, sub_user_id=sub_user_id)
+
+        # 1. Curator (clean up)
         results["curator"] = self.run_curator_agent(user_id, llm_client, auto_fix=auto_fix, sub_user_id=sub_user_id)
 
         # 2. Connector (find patterns in clean data)
