@@ -4481,7 +4481,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                     )
                     if embedder:
                         steps_summary = "; ".join(
-                            s.get("action", "") for s in pr.steps[:10]
+                            (s.get("action", "") if isinstance(s, dict) else str(s)) for s in pr.steps[:10]
                         )
                         pr_text = f"{pr.name}. {pr.trigger or ''}. Steps: {steps_summary}"
                         store.delete_procedure_embeddings(proc_id)
@@ -4524,7 +4524,7 @@ document.getElementById('code').addEventListener('keydown', e => {{ if(e.key==='
                     for sp in (similar_procs or []):
                         proc_text = f"{sp['name']}. {sp.get('trigger_condition') or ''}. "
                         proc_text += "; ".join(
-                            s.get("action", "") for s in (sp.get("steps") or [])[:10]
+                            (s.get("action", "") if isinstance(s, dict) else str(s)) for s in (sp.get("steps") or [])[:10]
                         )
                         score = EvolutionEngine.compute_link_score(
                             vector_similarity=sp["score"],

@@ -2978,7 +2978,7 @@ SEMANTIC MEMORY (facts about the user):
         procedures = self.get_procedures(user_id, limit=15, sub_user_id=sub_user_id)
         proc_lines = []
         for pr in procedures:
-            steps_text = " -> ".join(s.get("action", "") for s in pr.get("steps", []))
+            steps_text = " -> ".join((s.get("action", "") if isinstance(s, dict) else str(s)) for s in pr.get("steps", []))
             proc_lines.append(f"- {pr['name']}: {steps_text}")
 
         # Reflections
@@ -5548,7 +5548,7 @@ Be specific and personal, not generic. No markdown, just JSON."""
         Called when pattern detection finds a cluster with confidence 0.4-0.6
         (too low to auto-create, but worth surfacing to the user).
         """
-        steps_desc = " → ".join(s.get("action", "") for s in suggestion_steps[:5])
+        steps_desc = " → ".join((s.get("action", "") if isinstance(s, dict) else str(s)) for s in suggestion_steps[:5])
         title = f"Workflow detected: {suggestion_name}"
         detail = (
             f"Based on {episode_count} similar episodes, you may have a repeatable workflow:\n"

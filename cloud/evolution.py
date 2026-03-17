@@ -201,7 +201,7 @@ class EvolutionEngine:
             # 6. Re-embed the new version
             if self.embedder:
                 steps_summary = "; ".join(
-                    s.get("action", "") for s in result["new_steps"][:10]
+                    (s.get("action", "") if isinstance(s, dict) else str(s)) for s in result["new_steps"][:10]
                 )
                 text = f"{proc['name']}. {result.get('new_trigger') or proc['trigger_condition'] or ''}. Steps: {steps_summary}"
                 embs = self.embedder.embed_batch([text])
@@ -309,7 +309,7 @@ class EvolutionEngine:
                 # 5. Embed the new procedure
                 if self.embedder:
                     steps_summary = "; ".join(
-                        s.get("action", "") for s in proc_data["steps"][:10]
+                        (s.get("action", "") if isinstance(s, dict) else str(s)) for s in proc_data["steps"][:10]
                     )
                     text = f"{proc_data['name']}. {proc_data.get('trigger', '')}. Steps: {steps_summary}"
                     embs = self.embedder.embed_batch([text])

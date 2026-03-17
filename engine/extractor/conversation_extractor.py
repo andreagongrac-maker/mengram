@@ -436,7 +436,15 @@ class ConversationExtractor:
         for pr in data.get("procedures", []):
             steps = pr.get("steps", [])
             if isinstance(steps, list):
-                steps = [_ensure_str(s) if not isinstance(s, str) else s for s in steps]
+                clean_steps = []
+                for s in steps:
+                    if isinstance(s, dict):
+                        clean_steps.append(s)
+                    elif isinstance(s, str):
+                        clean_steps.append({"step": len(clean_steps) + 1, "action": s, "detail": ""})
+                    else:
+                        clean_steps.append({"step": len(clean_steps) + 1, "action": str(s), "detail": ""})
+                steps = clean_steps
             result.procedures.append(ExtractedProcedure(
                 name=_ensure_str(pr.get("name", "")),
                 trigger=_ensure_str(pr.get("trigger", "")),
