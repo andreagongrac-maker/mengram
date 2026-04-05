@@ -23,6 +23,7 @@ Usage:
 
 import sys
 import json
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +59,8 @@ class ChatRequest(BaseModel):
     messages: list[Message]
     system: str = ""
     auto_remember: bool = True
+    session_id: Optional[str] = None
+    return_history: bool = False
 
 class SearchRequest(BaseModel):
     query: str
@@ -114,6 +117,11 @@ class GraphResponse(BaseModel):
     edges: list[GraphEdge]
 
 
+# --- Session Store ---
+# In-memory store: session_id -> list of message dicts {"role": ..., "content": ...}
+_session_store: dict[str, list[dict]] = {}
+
+
 # --- API Factory ---
 
 def create_rest_api(brain: MengramBrain) -> "FastAPI":
@@ -140,11 +148,14 @@ def create_rest_api(brain: MengramBrain) -> "FastAPI":
     async def chat(req: ChatRequest):
         """
         Chat with LLM + automatic memory.
-        
-        1. Recalls context from vault based on user's message
-        2. Sends to LLM with context in system prompt
-        3. Remembers the conversation (extracts entities/knowledge)
-        4. Returns response + graph updates
+
+        1. Resolves or creates a session_id for server-side history
+        2. Merges server-stored history with any client-supplied messages
+        3. Recalls context from vault based on the last user message
+        4. Sends full history to LLM with context in system prompt
+        5. Remembers the conversation (extracts entities/knowledge)
+        6. Persists updated history in session store
+        7. Returns response + session_id + optional full history
         """
         from engine.extractor.conversation_extractor import MockLLMClient
 
@@ -154,16 +165,22 @@ def create_rest_api(brain: MengramBrain) -> "FastAPI":
                 detail="LLM not configured. Set provider/api_key in config.yaml"
             )
 
-        messages = [{"role": m.role, "content": m.content} for m in req.messages]
+        # 1. Resolve session — create one if not provided
+        session_id = req.session_id or str(uuid.uuid4())
 
-        # 1. Get last user message for recall
+        # 2. Load server-side history and merge with client-supplied messages
+        server_history = _session_store.get(session_id, [])
+        client_messages = [{"role": m.role, "content": m.content} for m in req.messages]
+        messages = server_history + client_messages
+
+        # 3. Get last user message for recall
         last_user = ""
         for m in reversed(messages):
             if m["role"] == "user":
                 last_user = m["content"]
                 break
 
-        # 2. Recall relevant context
+        # 4. Recall relevant context
         context = ""
         if last_user:
             try:
@@ -171,18 +188,18 @@ def create_rest_api(brain: MengramBrain) -> "FastAPI":
             except Exception:
                 pass
 
-        # 3. Build system prompt with context
+        # 5. Build system prompt with context
         system = req.system or "You are a helpful assistant with access to the user's knowledge base."
         if context:
             system += f"\n\n<memory_context>\n{context}\n</memory_context>"
 
-        # 4. Call LLM
+        # 6. Call LLM with full merged history
         try:
             response = brain.llm_client.chat(messages, system=system)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"LLM error: {str(e)}")
 
-        # 5. Remember (async-ish, non-blocking for response)
+        # 7. Remember
         new_entities = []
         if req.auto_remember and len(messages) >= 2:
             try:
@@ -191,11 +208,28 @@ def create_rest_api(brain: MengramBrain) -> "FastAPI":
             except Exception as e:
                 print(f"⚠️  Remember error: {e}", file=sys.stderr)
 
-        return {
+        # 8. Persist updated history to session store
+        updated_history = messages + [{"role": "assistant", "content": response}]
+        _session_store[session_id] = updated_history
+
+        # 9. Build response
+        result = {
             "response": response,
+            "session_id": session_id,
             "context_used": bool(context),
             "new_entities": new_entities,
         }
+        if req.return_history:
+            result["history"] = updated_history
+
+        return result
+
+    @app.delete("/api/chat/session/{session_id}")
+    async def clear_session(session_id: str):
+        """Clear server-side conversation history for a session."""
+        if session_id in _session_store:
+            del _session_store[session_id]
+        return {"status": "ok", "session_id": session_id}
 
     # --- Remember ---
 

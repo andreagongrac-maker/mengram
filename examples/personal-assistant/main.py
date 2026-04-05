@@ -79,9 +79,10 @@ def main():
                 mem_type = doc.metadata.get("memory_type", "unknown")
                 context += f"[{mem_type}] {doc.page_content}\n"
 
-        # Generate response with profile + memory context
+        # Generate response with profile + memory context + full conversation history
         response = llm.invoke([
             SystemMessage(content=system_prompt + context),
+            *history.messages,
             HumanMessage(content=message),
         ])
 

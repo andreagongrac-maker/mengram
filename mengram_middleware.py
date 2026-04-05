@@ -86,14 +86,9 @@ class AutoMemory:
         # Step 3: Call LLM
         self.conversation_history.append({"role": "user", "content": message})
 
-        # Format history into single prompt
-        conv_text = "\n".join(
-            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
-            for m in self.conversation_history[-10:]  # Last 10 messages
-        )
-
-        response = self.memory.llm.complete(
-            prompt=conv_text,
+        # Pass structured message history directly to the LLM (proper multi-turn format)
+        response = self.memory.llm.chat(
+            messages=self.conversation_history[-10:],  # Last 10 messages
             system=system,
         )
 
