@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "claude-therapist@claude-therapist-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-therapist-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "therealarvin/claude-therapist"
+      }
+    }
+  }
+}
