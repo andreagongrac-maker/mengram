@@ -337,6 +337,31 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
                     "required": ["name", "success"],
                 },
             ),
+            Tool(
+                name="calm_down",
+                description=(
+                    "Emotional regulation intervention. Call when the user is overwhelmed, "
+                    "frustrated, anxious, or stuck in a failure spiral. Returns a structured "
+                    "calm-down exercise (box breathing + grounding + reframe). Optionally saves "
+                    "the emotional event to memory for future context."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "situation": {
+                            "type": "string",
+                            "description": (
+                                "Brief description of what the user is going through "
+                                "(optional, used to personalize the response and save to memory)"
+                            ),
+                        },
+                        "save_to_memory": {
+                            "type": "boolean",
+                            "description": "Whether to save this emotional event to memory (default: true)",
+                        },
+                    },
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -433,6 +458,54 @@ def create_mcp_server(brain: MengramBrain) -> "Server":
                     status = "succeeded" if arguments["success"] else "failed"
                     return [TextContent(type="text", text=f"✅ Recorded: '{arguments['name']}' {status}")]
                 return [TextContent(type="text", text=f"❌ Procedure '{arguments['name']}' not found")]
+
+            elif name == "calm_down":
+                situation = arguments.get("situation", "")
+                save = arguments.get("save_to_memory", True)
+
+                if situation:
+                    opener = f"I hear you — {situation.strip()}. That's hard. Let's reset together.\n\n"
+                else:
+                    opener = "Let's take a moment to reset. You've got this.\n\n"
+
+                response = (
+                    f"{opener}"
+                    "---\n\n"
+                    "## Step 1 — Box Breathing (1–2 min)\n"
+                    "Breathe in a slow square:\n"
+                    "- **Inhale** for 4 counts\n"
+                    "- **Hold** for 4 counts\n"
+                    "- **Exhale** for 4 counts\n"
+                    "- **Hold** for 4 counts\n\n"
+                    "Repeat 4 times. Your nervous system will begin to settle.\n\n"
+                    "---\n\n"
+                    "## Step 2 — Ground Yourself (5-4-3-2-1)\n"
+                    "Name out loud (or mentally):\n"
+                    "- **5 things** you can see\n"
+                    "- **4 things** you can touch right now\n"
+                    "- **3 things** you can hear\n"
+                    "- **2 things** you can smell\n"
+                    "- **1 thing** you can taste\n\n"
+                    "This pulls you back into the present moment.\n\n"
+                    "---\n\n"
+                    "## Step 3 — Reframe\n"
+                    "Ask yourself:\n"
+                    "> \"What's the smallest next step I can take — not to solve everything, "
+                    "but just to move forward one inch?\"\n\n"
+                    "Progress beats perfection. You don't have to fix it all right now.\n\n"
+                    "---\n\n"
+                    "_Take your time. Come back when you're ready._"
+                )
+
+                if save and situation:
+                    try:
+                        brain.remember_text(
+                            f"Emotional event: User felt overwhelmed/frustrated. Situation: {situation}"
+                        )
+                    except Exception:
+                        pass
+
+                return [TextContent(type="text", text=response)]
 
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
